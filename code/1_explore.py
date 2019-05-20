@@ -14,6 +14,7 @@ Created on Mon Dec 18 12:01:38 2017
 import numpy as np
 import pandas as pd
 from scipy.stats.mstats import winsorize
+from scipy.stats import chi2_contingency
 import dill
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
@@ -27,12 +28,23 @@ from sklearn.linear_model import ElasticNet
 import xgboost as xgb
 import lightgbm as lgbm
 
-import os
-os.getcwd()
-# os.chdir("C:/My/Projekte/Python_PredMod")
-# exec(open("./code/0_init.py").read())
+import pdb # pdb.set_trace() # quit with "q", next line with "n", continue with "c"
 
+# import os
+# os.getcwd()
+# os.chdir("C:/My/Projekte/Python_PredMod")
 exec(open("./code/0_init.py").read())
+
+
+# ######################################################################################################################
+# Initialize
+# ######################################################################################################################
+
+# Adapt some default parameter differing per target types (NULL results in default value usage)
+# cutoff_switch = switch(TARGET_TYPE, "CLASS" = 0.1, "REGR" = 0.8, "MULTICLASS" = 0.8)  # adapt
+# ylim_switch = switch(TARGET_TYPE, "CLASS" = NULL, "REGR" = c(0, 250e3), "MULTICLASS" = NULL)  # adapt REGR opt
+cutoff_corr = 0.5
+cutoff_varimp = 0.52
 
 
 # ######################################################################################################################
@@ -79,17 +91,17 @@ print(np.setdiff1d(df_meta["variable"], df.columns.values))
 
 # --- Define target and train/test-fold ----------------------------------------------------------------------------
 # Target
-df["target"] = np.where(df.survived == 0, "N", "Y")
-df["target_num"] = df.target.map({"N": 0, "Y": 1})
-df[["target", "target_num"]].describe(include="all")
+df["target"] = df["survived"]
+df["target"].describe()
 
 # Train/Test fold: usually split by time
 df["fold"] = "train"
 df.loc[df.sample(frac=0.3, random_state=123).index, "fold"] = "test"
 print(df.fold.value_counts())
+df["fold_num"] = df["fold"].map({"train": 0, "test": 1})
 
 # Define the id
-df["id"] = np.arange(df.shape[0]) + 1
+df["id"] = np.arange(len(df)) + 1
 
 
 # ######################################################################################################################
@@ -104,7 +116,7 @@ df[metr].describe()
 
 # --- Create nominal variables for all metric variables (for linear models) before imputing -------------------------
 metr_binned = metr + "_BINNED_"
-df[metr_binned] = df[metr].apply(lambda x: pd.qcut(x, 10).astype(str))
+df[metr_binned] = df[metr].apply(lambda x: pd.qcut(x, 10).astype("str"))
 
 # Convert missings to own level ("(Missing)")
 df[metr_binned] = df[metr_binned].fillna("(Missing)")
@@ -125,50 +137,8 @@ metr = np.setdiff1d(metr, remove)  # adapt metadata
 metr_binned = np.setdiff1d(metr_binned, remove + "_BINNED_")  # keep "binned" version in sync
 
 # Check for outliers and skewness
-fig, ax = plt.subplots(1, len(metr))
-for i in range(len(metr)):
-    # i=1
-    axact = ax.flat[i]
-    sns.distplot(df.loc[df.target == "Y", metr[i]].dropna(), color="red", label="Y", ax=axact)
-    sns.distplot(df.loc[df.target == "N", metr[i]].dropna(), color="blue", label="N", ax=axact)
-    axact.set_title(metr[i])
-    axact.set_ylabel("density")
-    axact.set_xlabel(metr[i] + "(NA: " + str(round(misspct[metr[i]] * 100, 1)) + "%)")
-    ylim = axact.get_ylim()
-    axact.set_ylim(ylim[0] - 0.3*(ylim[1]-ylim[0]))
-    inset_ax = axact.inset_axes([0, 0, 1, 0.2])
-    inset_ax.set_axis_off()
-    axact.get_shared_x_axes().join(axact, inset_ax)
-    sns.boxplot(x=df[metr[i]].dropna(), y=df["target"], palette={"Y": "red", "N": "blue"}, ax=inset_ax)
-ax[0].legend(title="Target", loc="best")
-fig.tight_layout()
-# fig.subplots_adjust(left=None, bottom=None, right=None, top=None, wspace=0.8, hspace=None)
-fig.set_size_inches(w=12, h=8)
-fig.savefig(plotloc + "metr.pdf", format='pdf')
-# plt.show(fig)
-plt.close(fig)
-
-
-# plotnine cannot plot several plots on one page
-"""
-i=1
-nbins = 20
-target_name = "target"
-color = ["blue","red"]
-levs_target = ["N","Y"]
-p=(ggplot(data = df, mapping = aes(x = metr[i])) +
-      geom_histogram(mapping = aes(y = "..density..", fill = target_name, color = target_name), 
-                     stat = stat_bin(bins = nbins), position = "identity", alpha = 0.2) +
-      geom_density(mapping = aes(color = target_name)) +
-      scale_fill_manual(limits = levs_target[::-1], values = color[::-1], name = target_name) + 
-      scale_color_manual(limits = levs_target[::-1], values = color[::-1], name = target_name) +
-      labs(title = metr[i],
-           x = metr[i] + "(NA: " + str(round(misspct[metr[i]] * 100, 1)) + "%)")
-      )
-p
-plt.show()
-plt.close()
-"""
+plot_distr(df, metr, ncol=1, nrow=2, w=8, h=6)
+plt.close(fig="all")
 
 # Winsorize
 df[metr] = df[metr].apply(lambda x: winsorize(x, (0.01, 0.01)))  # hint: plot again before deciding for log-trafo
@@ -181,17 +151,11 @@ np.place(metr, np.isin(metr, tolog), tolog + "_LOG_")  # adapt metadata (keep or
 
 # --- Final variable information ------------------------------------------------------------------------------------
 # Univariate variable importance
-varimp_metr = pd.Series({x: (roc_auc_score(y_true=df["target_num"].values,
-                                           y_score=df[["target_num"]].
-                                           assign(dummy=pd.qcut(df[x], 10).astype("object").fillna("(Missing)")).
-                                           groupby("dummy")["target_num"].transform("mean").values)
-                             .round(2))
-                         for x in metr}).sort_values(ascending=False)
+varimp_metr = calc_varimp(df, metr)
 print(varimp_metr)
 
 # Plot 
-# plots = get_plot_distr_metr_class(df, metr, missinfo = misspct, varimpinfo = varimp)
-# ggsave(paste0(plotloc, "titanic_distr_metr_final.pdf"), marrangeGrob(plots, ncol=4, nrow=2), width=18, height=12)
+plot_distr(df, metr, varimp=varimp_metr, ncol=2, nrow=2, w=18, h=12, pdf=plotloc + "distr_metr.pdf")
 
 
 # --- Removing variables -------------------------------------------------------------------------------------------
@@ -202,33 +166,24 @@ metr_binned = np.setdiff1d(metr_binned, remove + "_BINNED")  # keep "binned" ver
 
 # Remove highly/perfectly (>=98%) correlated (the ones with less NA!)
 df[metr].describe()
-m_corr = abs(df[metr].corr(method="spearman"))
-fig = sns.heatmap(m_corr, annot=True, fmt=".2f", cmap="Blues").get_figure()
-fig.set_size_inches(w=6, h=6)
-plt.close(fig)
-fig.savefig(plotloc + "corr_metr.pdf")
+plot_corr(df, metr, cutoff=cutoff_corr, pdf=plotloc + "corr_metr.pdf")
 remove = np.array(["xxx", "xxx"], dtype="object")
 metr = np.setdiff1d(metr, remove)
 metr_binned = np.setdiff1d(metr_binned, remove + "_BINNED")  # keep "binned" version in sync
 
 
-"""
 # --- Time/fold depedency --------------------------------------------------------------------------------------------
 
 # Hint: In case of having a detailed date variable this can be used as regression target here as well!
 
 # Univariate variable importance (again ONLY for non-missing observations!)
-df$fold_test = factor(ifelse(df$fold == "test", "Y", "N"))
-(varimp_metr_fold = filterVarImp(df[metr], df$fold_test, nonpara = TRUE) %>% rowMeans() %>%
-    .[order(., decreasing = TRUE)] %>% round(2))
+varimp_metr_fold = calc_varimp(df, metr, "fold_num")
 
 # Plot: only variables with with highest importance
-metr_toprint = names(varimp_metr_fold)[varimp_metr_fold >= cutoff_varimp]
-plots = map(metr_toprint, ~ BoxCore::plot_distr(df[[.]], df$fold_test, ., "fold_test", varimps = varimp_metr_fold,
-                                                colors = c("blue","red")))
-ggsave(paste0(plotloc, TYPE, "_distr_metr_final_folddependency.pdf"), marrangeGrob(plots, ncol = 4, nrow = 2),
-       width = 18, height = 12)
-"""
+metr_toprint = varimp_metr_fold[varimp_metr_fold > cutoff_varimp].index.values
+plot_distr(df, metr_toprint, "fold_num", varimp=varimp_metr_fold, ncol=2, nrow=2, w=18, h=12,
+           pdf=plotloc + "distr_metr_final_folddependency.pdf")
+plt.close(plt.gcf())
 
 
 # --- Missing indicator and imputation (must be done at the end of all processing)------------------------------------
@@ -251,7 +206,7 @@ df[miss].isnull().sum()
 # --- Define categorical covariates -----------------------------------------------------------------------------------
 # Nominal variables
 cate = df_meta_sub.loc[df_meta_sub.type.isin(["nomi", "ordi"]), "variable"].values
-df[cate] = df[cate].astype("object")
+df[cate] = df[cate].astype("str")
 df[cate].describe()
 
 # Merge categorical variable (keep order)
@@ -282,94 +237,39 @@ df[cate + "_ENCODED"] = df[cate + "_ENCODED"].apply(
                         (np.arange(len(x.value_counts())) + 1).tolist()))
 
 # Univariate variable importance
-varimp_cate = pd.Series({x: (roc_auc_score(y_true=df.target_num.values,
-                                           y_score=df[[x, "target_num"]].groupby(x)["target_num"].
-                                           transform("mean").values)
-                             .round(2))
-                         for x in cate}).sort_values(ascending=False)
+varimp_cate = calc_varimp(df, cate)
 print(varimp_cate)
 
-
 # Check
-ncol = 2
-nrow = 2
-ppp = ncol * nrow
-
-pdf_pages = PdfPages(plotloc + "cate.pdf")
-for page in range(len(cate) % ppp + 1):
-    fig, ax = plt.subplots(ncol, nrow)
-    for i in range(ppp):
-        if page * ppp + i <= max(range(len(cate))):
-            # fig, ax = plt.subplots(1, 2); page=1; i=1
-            df_tmp = pd.DataFrame({"h": df.groupby(cate[page * ppp + i])["target_num"].mean(),
-                                   "w": df.groupby(cate[page * ppp + i]).size()}).reset_index()
-            df_tmp.w = df_tmp.w/max(df_tmp.w)
-            df_tmp["new_w"] = np.where(df_tmp["w"].values < 0.2, 0.2, df_tmp["w"])
-            axact = ax.flat[i]
-            # sns.barplot(df_tmp.h, df_tmp[cate[page * ppp + i]], orient="h", color="coral", ax=axact)
-            axact.barh(df_tmp[cate[page * ppp + i]], df_tmp.h, height=df_tmp.new_w, edgecolor="black")
-            axact.set_xlabel("Proportion Target = Y")
-            axact.set_title(cate[page * ppp + i] + " (VI:" + str(varimp_cate[cate[page * ppp + i]]) + ")")
-            axact.axvline(np.mean(df.target_num), ls="dotted", color="black")
-            xlim = axact.get_xlim()
-            axact.set_xlim(xlim[0] - 0.3 * (xlim[1] - xlim[0]))
-            inset_ax = axact.inset_axes([0, 0, 0.2, 1])
-            inset_ax.set_axis_off()
-            axact.get_shared_y_axes().join(axact, inset_ax)
-            axact.axvline(0, color="black")
-            inset_ax.barh(df_tmp[cate[page * ppp + i]], df_tmp.w, color="grey")
-            # plt.show()
-    # plt.subplots_adjust(wspace=1)
-    fig.set_size_inches(w=8, h=6)
-    fig.tight_layout()
-    pdf_pages.savefig(fig)
-    plt.close(fig)
-pdf_pages.close()
+plot_distr(df, cate, varimp=varimp_cate, ncol=2, nrow=2, w=8, h=6, pdf=plotloc + "cate.pdf")
 
 
-# Removing variables ----------------------------------------------------------------------------------------------
-
+# --- Removing variables ---------------------------------------------------------------------------------------------
 # Remove leakage variables
 cate = np.setdiff1d(cate, ["boat"])
 toomany = np.setdiff1d(toomany, ["boat"])
 
-"""
 # Remove highly/perfectly (>=99%) correlated (the ones with less levels!)
-plot = BoxCore::plot_corr(df[setdiff(cate, paste0("MISS_",miss))], "nomi", cutoff = cutoff_switch)
-ggsave(paste0(plotloc,TYPE,"_corr_cate.pdf"), plot, width = 9, height = 9)
-if (TYPE %in% c("REGR","MULTICLASS")) {
-  plot = BoxCore::plot_corr(df[ paste0("MISS_",miss)], "nomi", cutoff = cutoff_switch)
-  ggsave(paste0(plotloc,TYPE,"_corr_cate_MISS.pdf"), plot, width = 9, height = 9)
-  cate = setdiff(cate, c("MISS_BsmtFin_SF_2","MISS_BsmtFin_SF_1","MISS_second_Flr_SF","MISS_Misc_Val_LOG_",
-                         "MISS_Mas_Vnr_Area","MISS_Garage_Yr_Blt","MISS_Garage_Area","MISS_Total_Bsmt_SF"))
-}
-"""
+plot_corr(df, cate, cutoff=cutoff_corr, pdf=plotloc + "corr_cate.pdf")
 
 
-"""
-# Time/fold depedency --------------------------------------------------------------------------------------------
-
+# --- Time/fold depedency --------------------------------------------------------------------------------------------
 # Hint: In case of having a detailed date variable this can be used as regression target here as well!
+# Univariate variable importance (again ONLY for non-missing observations!)
+varimp_cate_fold = calc_varimp(df, cate, "fold_num")
 
-# Univariate variable importance
-(varimp_cate_fold = filterVarImp(df[cate], df$fold_test, nonpara = TRUE) %>% rowMeans() %>%
-   .[order(., decreasing = TRUE)] %>% round(2))
-
-# Plot (Hint: one might want to filter just on variable importance with highest importance)
-cate_toprint = names(varimp_cate_fold)[varimp_cate_fold >= cutoff_varimp]
-plots = map(cate_toprint, ~ BoxCore::plot_distr(df[[.]], df$fold_test, ., "fold_test", varimps = varimp_cate_fold,
-                                                colors = c("blue","red")))
-ggsave(paste0(plotloc,TYPE,"_distr_cate_folddependency.pdf"), marrangeGrob(plots, ncol = 4, nrow = 3),
-       width = 18, height = 12)
-"""
+# Plot: only variables with with highest importance
+cate_toprint = varimp_cate_fold[varimp_cate_fold > cutoff_varimp].index.values
+plot_distr(df, cate_toprint, "fold_num", varimp=varimp_cate_fold, ncol=2, nrow=2, w=12, h=8,
+           pdf=plotloc + "distr_cate_final_folddependency.pdf")
+plt.close(plt.gcf())
 
 
 ########################################################################################################################
 # Prepare final data
 ########################################################################################################################
 
-# Define final features ----------------------------------------------------------------------------------------
-
+# --- Define final features ----------------------------------------------------------------------------------------
 features_notree = np.append(metr, cate)
 features_lgbm = np.append(metr, cate + "_ENCODED")
 features = np.append(features_notree, toomany + "_ENCODED")
@@ -381,6 +281,6 @@ np.setdiff1d(features, df.columns.values.tolist())
 np.setdiff1d(features_binned, df.columns.values.tolist())
 
 
-# Save image ----------------------------------------------------------------------------------------------------------
+# --- Save image ------------------------------------------------------------------------------------------------------
 del df_orig
 dill.dump_session("1_explore.pkl")

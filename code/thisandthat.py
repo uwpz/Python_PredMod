@@ -1,9 +1,24 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Mon Dec 18 08:38:09 2017
 
-@author: Uwe
-"""
+
+# plotnine cannot plot several plots on one page
+i=1
+nbins = 20
+target_name = "target"
+color = ["blue","red"]
+levs_target = ["N","Y"]
+p=(ggplot(data = df, mapping = aes(x = metr[i])) +
+      geom_histogram(mapping = aes(y = "..density..", fill = target_name, color = target_name),
+                     stat = stat_bin(bins = nbins), position = "identity", alpha = 0.2) +
+      geom_density(mapping = aes(color = target_name)) +
+      scale_fill_manual(limits = levs_target[::-1], values = color[::-1], name = target_name) +
+      scale_color_manual(limits = levs_target[::-1], values = color[::-1], name = target_name) +
+      labs(title = metr[i],
+           x = metr[i] + "(NA: " + str(round(misspct[metr[i]] * 100, 1)) + "%)")
+      )
+p
+plt.show()
+plt.close()
+
 
 #%matplotlib
 import matplotlib.pyplot as plt
