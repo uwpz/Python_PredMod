@@ -1,26 +1,21 @@
 
-# Univariate variable importance
-def calc_varimp(df_data, features, target_name="target"):
-    # df_data=df; features=metr; target_name="fold"
-    varimp = pd.Series()
-    for feature_act in features:
-        # feature_act=metr[0]
-        #IPython.embed()
+import numpy as np
+states = [False, False, False, False, True, True, False, True, False, False, False, False, False, False, False, False]
+a = np.where(states)[0]
+a = np.nonzero(states)
+states[list(a)]
 
-        if df_data[feature_act].dtype == "object":
-            varimp_act = {feature_act: (roc_auc_score(y_true=df_data[target_name].values,
-                                                      y_score=df_data[[feature_act, target_name]]
-                                                      .groupby(feature_act)[target_name]
-                                                      .transform("mean").values)
-                                        .round(3))}
-        else:
-            varimp_act = {feature_act: (roc_auc_score(y_true=df_data[target_name].values,
-                                                      y_score=df_data[[target_name]]
-                                                      .assign(dummy=pd.qcut(df_data[feature_act], 10).astype("object")
-                                                              .fillna("(Missing)"))
-                                                      .groupby("dummy")[target_name]
-                                                      .transform("mean").values)
-                                        .round(3))}
-        varimp = varimp.append(pd.Series(varimp_act))
-    varimp.sort_values(ascending=False, inplace=True)
-    return varimp
+
+a = np.arange(10)
+np.random.seed(42)
+np.random.shuffle(a)
+b = np.array_split(a, 3)
+del b[1]
+b
+
+a = [1,2]
+b=1
+b in a
+
+a = True if 1==1 else False
+a

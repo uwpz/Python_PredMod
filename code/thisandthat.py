@@ -1,3 +1,46 @@
+df_fitres = pd.DataFrame.from_dict(fit.cv_results_)
+df_fitres["param_min_child_weight__learning_rate"] = (df_fitres.param_min_child_weight.astype("str") + "_" +
+                                                      df_fitres.param_learning_rate.astype("str"))
+sns.catplot(kind="point",
+            data=df_fitres,
+            x="param_n_estimators", y="mean_test_score", hue="param_min_child_weight__learning_rate",
+            col="param_max_depth",
+            palette=["C0", "C0", "C1", "C1"], markers=["o", "x", "o", "x"], linestyles=["-", ":", "-", ":"],
+            legend_out=False)
+df_fitres.pivot_table(values=["mean_test_score"],
+                     index="param_n_estimators",
+                     columns=["param_min_child_weight__learning_rate","param_max_depth"]) \
+    .plot(marker="o")
+plt.close()
+# Score
+
+fit = RandomForestClassifier(n_estimators=50, max_features=3)\
+    .fit(create_sparse_matrix(df_tune, metr, cate), df_tune["target"])
+yhat = fit.predict_proba(create_sparse_matrix(df_tune, metr, cate))[:, 1]
+roc_auc_score(df_tune["target"], yhat)
+fpr, tpr, cutoff = roc_curve(df_tune["target"], yhat)
+cross_val_score(fit,
+                create_sparse_matrix(df_tune, metr, cate), df_tune["target"],
+                cv=5, scoring=metric, n_jobs=5)
+
+
+from plotnine import *
+
+df = {"dates": [1, 2, 3, 4, 5, 6], "amount": [21, 22, 18, 19, 25, 15]}
+df = pd.DataFrame(df)
+plt.ioff()
+plot = ggplot(aes(x="dates", y="amount"), data=df) + xlab("Dates") + ylab("Amount")  # Create the base plot and axes
+plot
+
+
+factors = ["param_min_child_weight", "param_learning_rate", "param_max_depth"]
+df_fitres[factors] = df_fitres[factors].astype("str")
+(ggplot(df_fitres, aes(x="param_n_estimators",
+                       y="mean_test_score",
+                       colour="param_min_child_weight"))
+  + geom_line(aes(linetype="param_learning_rate"))
+  + geom_point(aes(shape="param_learning_rate"))
+  + facet_grid(". ~ param_max_depth"))
 
 
 # plotnine cannot plot several plots on one page

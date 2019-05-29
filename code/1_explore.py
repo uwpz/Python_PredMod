@@ -1,38 +1,34 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Mon Dec 18 12:01:38 2017
-
-@author: Uwe
-"""
 
 # ######################################################################################################################
-#  Libraries + Parallel Processing Start
+#  Libraries
 # ######################################################################################################################
 
-# Load libraries and functions
-# exec(open("./code/0_init.py").read())
+# --- Load general libraries  -------------------------------------------------------------------------------------
+# Data
 import numpy as np
 import pandas as pd
-from scipy.stats.mstats import winsorize
-from scipy.stats import chi2_contingency
-import dill
+from dill import (load_session, dump_session)
+
+# Plot
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 import seaborn as sns
-# from plotnine import *
-from sklearn.model_selection import (GridSearchCV, ShuffleSplit, cross_validate, RepeatedKFold, learning_curve,
-                                     cross_val_score)
-from sklearn.metrics import roc_auc_score
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-from sklearn.linear_model import ElasticNet
-import xgboost as xgb
-import lightgbm as lgbm
+# plt.ioff(); plt.ion()  # Interactive plotting? ion is default
 
-import pdb # pdb.set_trace() # quit with "q", next line with "n", continue with "c"
+# Util
+import pdb  # pdb.set_trace()  #quit with "q", next line with "n", continue with "c"
+from os import getcwd
 
-# import os
-# os.getcwd()
-# os.chdir("C:/My/Projekte/Python_PredMod")
+# My
+# import sys; sys.path.append(getcwd() + "\\code") #not needed if code is marked as "source" in pycharm
+from myfunc import *
+
+
+# --- Load specific libraries  -------------------------------------------------------------------------------------
+from scipy.stats.mstats import winsorize
+
+
+# --- Load results, run 0_init  -----------------------------------------------
 exec(open("./code/0_init.py").read())
 
 
@@ -43,7 +39,7 @@ exec(open("./code/0_init.py").read())
 # Adapt some default parameter differing per target types (NULL results in default value usage)
 # cutoff_switch = switch(TARGET_TYPE, "CLASS" = 0.1, "REGR" = 0.8, "MULTICLASS" = 0.8)  # adapt
 # ylim_switch = switch(TARGET_TYPE, "CLASS" = NULL, "REGR" = c(0, 250e3), "MULTICLASS" = NULL)  # adapt REGR opt
-cutoff_corr = 0.5
+cutoff_corr = 0.1
 cutoff_varimp = 0.52
 
 
@@ -67,12 +63,12 @@ df_orig["survived"].value_counts() / df_orig.shape[0]
 df = df_orig.copy()
 
 
-# --- Read metadata (Project specific) -------------------------------------------------------------------------------
+# --- Read metadata (Project specific) -----------------------------------------------------------------------------
 df_meta = pd.read_excel(dataloc + "datamodel_titanic.xlsx", header=1)
 
 # Check
-print(np.setdiff1d(df.columns.values, df_meta["variable"]))
-print(np.setdiff1d(df_meta.loc[df_meta["category"] == "orig", "variable"], df.columns.values))
+print(np.setdiff1d(df.columns.values, df_meta["variable"].values))
+print(np.setdiff1d(df_meta.loc[df_meta["category"] == "orig", "variable"].values, df.columns.values))
 
 # Filter on "ready"
 df_meta_sub = df_meta.loc[df_meta["status"].isin(["ready", "derive"])]
@@ -86,7 +82,7 @@ df["fare_pp"] = df.groupby("ticket")["fare"].transform("mean")
 df[["deck", "familysize", "fare_pp"]].describe(include="all")
 
 # Check
-print(np.setdiff1d(df_meta["variable"], df.columns.values))
+print(np.setdiff1d(df_meta["variable"].values, df.columns.values))
 
 
 # --- Define target and train/test-fold ----------------------------------------------------------------------------
@@ -110,7 +106,7 @@ df["id"] = np.arange(len(df)) + 1
 
 # --- Define metric covariates -------------------------------------------------------------------------------------
 metr = df_meta_sub.loc[df_meta_sub.type == "metr", "variable"].values
-df[metr] = df[metr].apply(pd.to_numeric)
+df[metr] = df[metr].astype("float")
 df[metr].describe()
 
 
@@ -137,8 +133,7 @@ metr = np.setdiff1d(metr, remove)  # adapt metadata
 metr_binned = np.setdiff1d(metr_binned, remove + "_BINNED_")  # keep "binned" version in sync
 
 # Check for outliers and skewness
-plot_distr(df, metr, ncol=1, nrow=2, w=8, h=6)
-plt.close(fig="all")
+plot_distr(df, metr, ncol=2, nrow=2)
 
 # Winsorize
 df[metr] = df[metr].apply(lambda x: winsorize(x, (0.01, 0.01)))  # hint: plot again before deciding for log-trafo
@@ -151,7 +146,7 @@ np.place(metr, np.isin(metr, tolog), tolog + "_LOG_")  # adapt metadata (keep or
 
 # --- Final variable information ------------------------------------------------------------------------------------
 # Univariate variable importance
-varimp_metr = calc_varimp(df, metr)
+varimp_metr = calc_imp(df, metr)
 print(varimp_metr)
 
 # Plot 
@@ -173,23 +168,20 @@ metr_binned = np.setdiff1d(metr_binned, remove + "_BINNED")  # keep "binned" ver
 
 
 # --- Time/fold depedency --------------------------------------------------------------------------------------------
-
 # Hint: In case of having a detailed date variable this can be used as regression target here as well!
 
 # Univariate variable importance (again ONLY for non-missing observations!)
-varimp_metr_fold = calc_varimp(df, metr, "fold_num")
+varimp_metr_fold = calc_imp(df, metr, "fold_num")
 
 # Plot: only variables with with highest importance
 metr_toprint = varimp_metr_fold[varimp_metr_fold > cutoff_varimp].index.values
 plot_distr(df, metr_toprint, "fold_num", varimp=varimp_metr_fold, ncol=2, nrow=2, w=18, h=12,
-           pdf=plotloc + "distr_metr_final_folddependency.pdf")
-plt.close(plt.gcf())
+           pdf=plotloc + "distr_metr_folddep.pdf")
 
 
 # --- Missing indicator and imputation (must be done at the end of all processing)------------------------------------
 
-miss = metr[df[metr].isnull().any().values]
-# alternative: [x for x in metr if df[x].isnull().any()]
+miss = metr[df[metr].isnull().any().values]  # alternative: [x for x in metr if df[x].isnull().any()]
 df["MISS_" + miss] = pd.DataFrame(np.where(df[miss].isnull(), "miss", "no_miss"))
 df["MISS_" + miss].describe()
 
@@ -221,27 +213,28 @@ df[cate].describe()
 # Get "too many members" columns and copy these for additional encoded features (for tree based models)
 topn_toomany = 10
 levinfo = df[cate].apply(lambda x: x.unique().size).sort_values(ascending=False)  # number of levels
+print(levinfo)
 toomany = levinfo[levinfo > topn_toomany].index.values
 print(toomany)
 toomany = np.setdiff1d(toomany, ["xxx", "xxx"])  # set exception for important variables
-df[cate + "_ENCODED"] = df[cate]
+
+# Create encoded features (for tree based models), i.e. numeric representation
+df[cate + "_ENCODED"] = df[cate].apply(
+    lambda x: x.replace(x.value_counts().index.values.tolist(),
+                        (np.arange(len(x.value_counts())) + 1).tolist()))
 
 # Convert toomany features: lump levels and map missings to own level
 df[toomany] = df[toomany].apply(lambda x:
                                 x.replace(np.setdiff1d(x.value_counts()[topn_toomany:].index.values, "(Missing)"),
                                           "_OTHER_"))
 
-# Create encoded features (for tree based models), i.e. numeric representation
-df[cate + "_ENCODED"] = df[cate + "_ENCODED"].apply(
-    lambda x: x.replace(x.value_counts().index.values.tolist(),
-                        (np.arange(len(x.value_counts())) + 1).tolist()))
 
 # Univariate variable importance
-varimp_cate = calc_varimp(df, cate)
+varimp_cate = calc_imp(df, cate)
 print(varimp_cate)
 
 # Check
-plot_distr(df, cate, varimp=varimp_cate, ncol=2, nrow=2, w=8, h=6, pdf=plotloc + "cate.pdf")
+plot_distr(df, cate, varimp=varimp_cate, ncol=2, nrow=2, w=18, h=12, pdf=plotloc + "distr_cate.pdf")
 
 
 # --- Removing variables ---------------------------------------------------------------------------------------------
@@ -256,13 +249,12 @@ plot_corr(df, cate, cutoff=cutoff_corr, pdf=plotloc + "corr_cate.pdf")
 # --- Time/fold depedency --------------------------------------------------------------------------------------------
 # Hint: In case of having a detailed date variable this can be used as regression target here as well!
 # Univariate variable importance (again ONLY for non-missing observations!)
-varimp_cate_fold = calc_varimp(df, cate, "fold_num")
+varimp_cate_fold = calc_imp(df, cate, "fold_num")
 
 # Plot: only variables with with highest importance
 cate_toprint = varimp_cate_fold[varimp_cate_fold > cutoff_varimp].index.values
 plot_distr(df, cate_toprint, "fold_num", varimp=varimp_cate_fold, ncol=2, nrow=2, w=12, h=8,
-           pdf=plotloc + "distr_cate_final_folddependency.pdf")
-plt.close(plt.gcf())
+           pdf=plotloc + "distr_cate_folddep.pdf")
 
 
 ########################################################################################################################
@@ -282,5 +274,6 @@ np.setdiff1d(features_binned, df.columns.values.tolist())
 
 
 # --- Save image ------------------------------------------------------------------------------------------------------
+plt.close(fig="all")  # plt.close(plt.gcf())
 del df_orig
-dill.dump_session("1_explore.pkl")
+dump_session("1_explore.pkl")
