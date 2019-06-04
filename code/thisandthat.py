@@ -1,3 +1,10 @@
+
+# enc = OneHotEncoder(categories=[df_train[x].unique() for x in cate])
+# d_tmp = dict(zip(cate, enc.categories))
+# m_cate = enc.fit_transform(df[cate])
+# a = pd.Series(np.cumsum([len(x) for x in enc.categories_]))
+
+
 df_fitres = pd.DataFrame.from_dict(fit.cv_results_)
 df_fitres["param_min_child_weight__learning_rate"] = (df_fitres.param_min_child_weight.astype("str") + "_" +
                                                       df_fitres.param_learning_rate.astype("str"))

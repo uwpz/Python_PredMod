@@ -12,6 +12,13 @@ from scipy.sparse import hstack
 from sklearn.model_selection import *
 from sklearn.metrics import *
 from sklearn.preprocessing import *
+from sklearn.calibration import calibration_curve
+from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.impute import SimpleImputer
+
+
+from joblib import Parallel, delayed
+
 
 # ######################################################################################################################
 # My Functions
@@ -255,7 +262,7 @@ def plot_all_performances(y, yhat, w=12, h=8, pdf=None):
     ax_act = ax[0, 0]
     fpr, tpr, cutoff = roc_curve(y, yhat[:, 1])
     roc_auc = roc_auc_score(y, yhat[:, 1])
-    sns.lineplot(fpr, tpr, ax=ax_act, color=sns.xkcd_rgb["red"])
+    sns.lineplot(fpr, tpr, ax=ax_act, palette=sns.xkcd_palette(["red"]))
     props = {'xlabel': r"fpr: P($\^y$=1|$y$=0)",
              'ylabel': r"tpr: P($\^y$=1|$y$=1)",
              'title': "ROC (AUC = {0:.2f})".format(roc_auc)}
@@ -285,7 +292,7 @@ def plot_all_performances(y, yhat, w=12, h=8, pdf=None):
     # Calibration
     ax_act = ax[1, 0]
     true, predicted = calibration_curve(y, yhat[:, 1], n_bins=10)
-    sns.lineplot(predicted, true, ax=ax_act, color=sns.xkcd_rgb["red"], marker="o")
+    sns.lineplot(predicted, true, ax=ax_act, palette=sns.xkcd_palette(["red"]), marker="o")
     props = {'xlabel': r"$\bar{\^y}$ in $\^y$-bin",
              'ylabel': r"$\bar{y}$ in $\^y$-bin",
              'title': "Calibration"}
@@ -295,7 +302,7 @@ def plot_all_performances(y, yhat, w=12, h=8, pdf=None):
     ax_act = ax[1, 1]
     prec, rec, cutoff = precision_recall_curve(y, yhat[:, 1])
     prec_rec_auc = average_precision_score(y, yhat[:, 1])
-    sns.lineplot(rec, prec, ax=ax_act, color=sns.xkcd_rgb["red"])
+    sns.lineplot(rec, prec, ax=ax_act, palette=sns.xkcd_palette(["red"]))
     props = {'xlabel': r"recall=tpr: P($\^y$=1|$y$=1)",
              'ylabel': r"precision: P($y$=1|$\^y$=1)",
              'title': "Precision Recall Curve (AUC = {0:.2f})".format(prec_rec_auc)}
@@ -309,7 +316,7 @@ def plot_all_performances(y, yhat, w=12, h=8, pdf=None):
     pct_tested = np.array([])
     for thres in cutoff:
         pct_tested = np.append(pct_tested, [np.sum(yhat[:, 1] >= thres)/len(yhat)])
-    sns.lineplot(pct_tested, prec[:-1], ax=ax_act, color=sns.xkcd_rgb["red"])
+    sns.lineplot(pct_tested, prec[:-1], ax=ax_act, palette=sns.xkcd_palette(["red"]))
     props = {'xlabel': "% Samples Tested",
              'ylabel': r"precision: P($y$=1|$\^y$=1)",
              'title': "Precision Curve"}
@@ -385,3 +392,144 @@ class TrainTestSep:
 
     def get_n_splits(self):
         return self.n_splits
+    
+    
+# Variable importance
+def calc_varimp_by_permutation(df, df_ref, fit,
+                               target, metr, cate,
+                               b_sample, b_all,
+                               features=None,
+                               n_jobs=8):
+    # df=df_train;  df_ref=df; target = "target"
+    all_features = np.append(metr, cate)
+    if features is None:
+        features = all_features
+
+    # Original performance
+    perf_orig = roc_auc_score(df[target],
+                              scale_predictions(fit.predict_proba(create_sparse_matrix(df, metr, cate, df_ref)),
+                                                b_sample, b_all)[:, 1])
+
+    # Performance per variable after permutation
+    i_perm = np.random.permutation(np.arange(len(df)))  # permutation vector
+
+    def run_in_parallel(df_perm, i_perm, feature, metr, cate, df_ref):
+        df_perm[feature] = df_perm[feature].values[i_perm]
+        perf = roc_auc_score(df_perm[target],
+                             scale_predictions(
+                                 fit.predict_proba(create_sparse_matrix(df_perm, metr, cate, df_ref)),
+                                 b_sample, b_all)[:, 1])
+        return perf
+    perf = Parallel(n_jobs=n_jobs)(delayed(run_in_parallel)(df, i_perm, feature, metr, cate, df_ref)
+                                   for feature in features)
+
+    # Collect performances and calcualte importance
+    df_varimp = pd.DataFrame({"feature": features, "perf_diff": np.maximum(0, perf_orig - perf)})\
+        .sort_values(["perf_diff"], ascending=False)\
+        .assign(importance=lambda x: 100 * x["perf_diff"] / max(x["perf_diff"]))\
+        .assign(importance_cum=lambda x: 100 * x["perf_diff"].cumsum() / sum(x["perf_diff"]))\
+        .assign(importance_sumnormed=lambda x: 100 * x["perf_diff"] / sum(x["perf_diff"]))
+
+    return df_varimp
+
+
+# Map Nonexisting members of a string column to modus
+class MapNonexisting(BaseEstimator, TransformerMixin):
+    def __init__(self, features):
+        self.features = features
+        self._d_unique = None
+        self._d_modus = None
+
+    def fit(self, df):
+        self._d_unique = {x: pd.unique(df[x]) for x in self.features}
+        self._d_modus = {x: df[x].value_counts().index[0] for x in self.features}
+        return self
+
+    def transform(self, df):
+        df = df.apply(lambda x: x.where(np.in1d(x, self._d_unique[x.name]),
+                                        self._d_modus[x.name]) if x.name in self.features else x)
+        return df
+
+    def fit_transform(self, df, y=None, **fit_params):
+        if fit_params["transform"]:
+            return self.fit(df).transform(df)
+        else:
+            self.fit(df)
+            return df
+
+
+# Map Non-topn frequent members of a string column to "other" label
+class MapToomany(BaseEstimator, TransformerMixin):
+    def __init__(self, features, n_top=10, other_label="_OTHER_"):
+        self.features = features
+        self.other_label = other_label
+        self.n_top = n_top
+        self._s_levinfo = None
+        self._toomany = None
+        self._d_top = None
+        self._statistics = None
+
+    def fit(self, df):
+        self._s_levinfo = df[self.features].apply(lambda x: x.unique().size).sort_values(ascending=False)
+        self._toomany = self._s_levinfo[self._s_levinfo > self.n_top].index.values
+        self._d_top = {x: df[x].value_counts().index.values[:self.n_top] for x in self._toomany}
+        self._statistics = {"_s_levinfo": self._s_levinfo, "_toomany": self._toomany, "_d_top": self._d_top}
+        return self
+
+    def transform(self, df):
+        df = df.apply(lambda x: x.where(~np.in1d(x, self._d_top[x.name]),
+                                        self.other_label) if x.name in self._toomany else x)
+        return df
+
+
+# Target Encoding
+class TargetEncoding(BaseEstimator, TransformerMixin):
+    def __init__(self, features, df4encoding, target="target"):
+        self.features = features
+        self.df4encoding = df4encoding
+        self.target = target
+        self._d_map = None
+        self._statistics = None
+
+    def fit(self, df):
+        self._d_map = {x: self.df4encoding.groupby(x, as_index=False)[self.target].agg("mean")
+                                          .sort_values(self.target, ascending=False)
+                                          .assign(rank=lambda x: np.arange(len(x)) + 1)
+                                          .set_index(x)
+                                          ["rank"]
+                                          .to_dict() for x in self.features}
+        self._statistics = {"_d_map": self._d_map}
+        return self
+
+    def transform(self, df):
+        df[self.features + "_ENCODED"] = df[self.features].apply(lambda x: x.map(self._d_map[x.name]))
+        return df
+
+
+# SimpleImputer for data frames
+class DfSimpleImputer(SimpleImputer):
+    def __init__(self, features, **kwargs):
+        super(DfSimpleImputer, self).__init__(**kwargs)
+        self.features = features
+
+    def fit(self, df, **kwargs):
+        return super(DfSimpleImputer, self).fit(df[self.features], **kwargs)
+
+    def transform(self, df):
+        df[self.features] = pd.DataFrame(super(DfSimpleImputer, self).transform(df[self.features].values),
+                                         columns=self.features)
+        return df
+
+
+# Convert
+class Convert(BaseEstimator, TransformerMixin):
+    def __init__(self, features, convert_to):
+        self.features = features
+        self.convert_to = convert_to
+
+    def fit(self, df):
+        return self
+
+    def transform(self, df):
+        df[self.features].astype(self.convert_to)
+        return df
