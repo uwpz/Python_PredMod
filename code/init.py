@@ -1,23 +1,48 @@
 
+# ######################################################################################################################
+# Libraries
+# ######################################################################################################################
+
+# Data
 import numpy as np
 import pandas as pd
-import scipy as sp
+
+# Plot
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 import seaborn as sns
 
+# ETL
 from scipy.stats import chi2_contingency
 from scipy.sparse import hstack
 
-from sklearn.model_selection import *
+# ML
 from sklearn.metrics import *
 from sklearn.preprocessing import *
 from sklearn.calibration import calibration_curve
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.impute import SimpleImputer
 
-
+# Util
+from os import getcwd
+import pdb  # pdb.set_trace()  #quit with "q", next line with "n", continue with "c"
 from joblib import Parallel, delayed
+from dill import (load_session, dump_session)
+
+
+# ######################################################################################################################
+# Parameters
+# ######################################################################################################################
+
+# Locations
+dataloc = "./data/"
+plotloc = "./output/"
+
+# Util
+sns.set(style="whitegrid")
+pd.set_option('display.width', 320)
+pd.set_option('display.max_columns', 20)
+# plt.ioff(); plt.ion()  # Interactive plotting? ion is default
 
 
 # ######################################################################################################################
@@ -477,8 +502,8 @@ class MapToomany(BaseEstimator, TransformerMixin):
         return self
 
     def transform(self, df):
-        df = df.apply(lambda x: x.where(~np.in1d(x, self._d_top[x.name]),
-                                        self.other_label) if x.name in self._toomany else x)
+        df = df.apply(lambda x: x.where(np.in1d(x, self._d_top[x.name]),
+                                        other=self.other_label) if x.name in self._toomany else x)
         return df
 
 

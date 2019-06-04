@@ -1,50 +1,23 @@
 
 # ######################################################################################################################
-#  Libraries
+#  Initialize: Libraries, functions, parameters
 # ######################################################################################################################
 
-# --- Load general libraries  -------------------------------------------------------------------------------------
-# Data
-import numpy as np
-import pandas as pd
-from dill import (load_session, dump_session)
+# General libraries, parameters and functions
+from init import *
 
-# Plot
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_pdf import PdfPages
-import seaborn as sns
-# plt.ioff(); plt.ion()  # Interactive plotting? ion is default
-
-# Util
-import pdb  # pdb.set_trace()  #quit with "q", next line with "n", continue with "c"
-from os import getcwd
-
-# My
-# import sys; sys.path.append(getcwd() + "\\code") #not needed if code is marked as "source" in pycharm
-from myfunc import *
-
-
-# --- Load specific libraries  -------------------------------------------------------------------------------------
-# ML
-from sklearn.metrics import *
-from sklearn.calibration import calibration_curve
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+# Specific libraries
+from sklearn.ensemble import RandomForestClassifier  # , GradientBoostingClassifier
 from sklearn.linear_model import ElasticNet
 import xgboost as xgb
 import lightgbm as lgbm
 
+# Specific parameters
+metric = "roc_auc"  # metric for peformance comparison
 
-# --- Load results, run 0_init  -----------------------------------------------
+# Load results from exploration
+df = None
 load_session("1_explore.pkl")
-exec(open("./code/0_init.py").read())
-
-
-# ######################################################################################################################
-# Initialize
-# ######################################################################################################################
-
-# Set metric for peformance comparison
-metric = "roc_auc"
 
 
 # ######################################################################################################################

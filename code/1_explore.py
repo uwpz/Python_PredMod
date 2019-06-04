@@ -1,44 +1,16 @@
 
 # ######################################################################################################################
-#  Libraries
+#  Initialize: Libraries, functions, parameters
 # ######################################################################################################################
 
-# --- Load general libraries  -------------------------------------------------------------------------------------
-# Data
-import numpy as np
-import pandas as pd
-from dill import (load_session, dump_session)
-
-# Plot
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_pdf import PdfPages
-import seaborn as sns
-# plt.ioff(); plt.ion()  # Interactive plotting? ion is default
-
-# Util
-import pdb  # pdb.set_trace()  #quit with "q", next line with "n", continue with "c"
-from os import getcwd
-
-# My
+# General libraries, parameters and functions
+from init import *
 # import sys; sys.path.append(getcwd() + "\\code") #not needed if code is marked as "source" in pycharm
-from myfunc import *
 
-
-# --- Load specific libraries  -------------------------------------------------------------------------------------
+# Specific libraries
 from scipy.stats.mstats import winsorize
 
-
-# --- Load results, run 0_init  -----------------------------------------------
-exec(open("./code/0_init.py").read())
-
-
-# ######################################################################################################################
-# Initialize
-# ######################################################################################################################
-
-# Adapt some default parameter differing per target types (NULL results in default value usage)
-# cutoff_switch = switch(TARGET_TYPE, "CLASS" = 0.1, "REGR" = 0.8, "MULTICLASS" = 0.8)  # adapt
-# ylim_switch = switch(TARGET_TYPE, "CLASS" = NULL, "REGR" = c(0, 250e3), "MULTICLASS" = NULL)  # adapt REGR opt
+# Specific parameters
 cutoff_corr = 0.1
 cutoff_varimp = 0.52
 
@@ -48,6 +20,7 @@ cutoff_varimp = 0.52
 # ######################################################################################################################
 
 # --- Read data ------------------------------------------------------------------------------------------------------
+# noinspection PyUnresolvedReferences
 df_orig = pd.read_csv(dataloc + "titanic.csv")
 df_orig.describe()
 df_orig.describe(include=["object"])
@@ -92,10 +65,10 @@ df["target"].describe()
 
 # Train/Test fold: usually split by time
 np.random.seed(123)
-df["fold"] = np.random.permutation(pd.qcut(np.arange(len(df)), [0, 0.1, 0.8, 1], ["util", "train", "test"]))
+# noinspection PyTypeChecker
+df["fold"] = np.random.permutation(pd.qcut(np.arange(len(df)), q=[0, 0.1, 0.8, 1], labels=["util", "train", "test"]))
 print(df.fold.value_counts())
 df["fold_num"] = df["fold"].map({"train": 0, "util": 0, "test": 1})
-b_traintest = np.in1d(df["fold"].values, ["train","test"])
 
 
 # Define the id
@@ -108,7 +81,7 @@ df["id"] = np.arange(len(df)) + 1
 
 # --- Define metric covariates -------------------------------------------------------------------------------------
 metr = df_meta_sub.loc[df_meta_sub.type == "metr", "variable"].values
-df = Convert(features = metr, convert_to = "float").fit_transform(df)
+df = Convert(features=metr, convert_to="float").fit_transform(df)
 df[metr].describe()
 
 
@@ -135,7 +108,7 @@ metr = np.setdiff1d(metr, remove)  # adapt metadata
 metr_binned = np.setdiff1d(metr_binned, remove + "_BINNED_")  # keep "binned" version in sync
 
 # Check for outliers and skewness
-plot_distr(df.iloc[b_traintest,:], metr, ncol=2, nrow=2)
+plot_distr(df.query("fold != 'util'"), metr, ncol=2, nrow=2)
 
 # Winsorize
 df[metr] = df[metr].apply(lambda x: winsorize(x, (0.01, 0.01)))  # hint: plot again before deciding for log-trafo
@@ -148,11 +121,11 @@ np.place(metr, np.isin(metr, tolog), tolog + "_LOG_")  # adapt metadata (keep or
 
 # --- Final variable information ------------------------------------------------------------------------------------
 # Univariate variable importance
-varimp_metr = calc_imp(df.iloc[b_traintest,:], metr)
+varimp_metr = calc_imp(df.query("fold != 'util'"), metr)
 print(varimp_metr)
 
 # Plot 
-plot_distr(df.iloc[b_traintest,:], metr, varimp=varimp_metr,
+plot_distr(df.query("fold != 'util'"), metr, varimp=varimp_metr,
            ncol=2, nrow=2, w=18, h=12, pdf=plotloc + "distr_metr.pdf")
 
 
@@ -174,11 +147,11 @@ metr_binned = np.setdiff1d(metr_binned, remove + "_BINNED")  # keep "binned" ver
 # Hint: In case of having a detailed date variable this can be used as regression target here as well!
 
 # Univariate variable importance (again ONLY for non-missing observations!)
-varimp_metr_fold = calc_imp(df.iloc[b_traintest,:], metr, "fold_num")
+varimp_metr_fold = calc_imp(df.query("fold != 'util'"), metr, "fold_num")
 
 # Plot: only variables with with highest importance
 metr_toprint = varimp_metr_fold[varimp_metr_fold > cutoff_varimp].index.values
-plot_distr(df.iloc[b_traintest,:], metr_toprint, "fold_num", varimp=varimp_metr_fold,
+plot_distr(df.query("fold != 'util'"), metr_toprint, "fold_num", varimp=varimp_metr_fold,
            ncol=2, nrow=2, w=18, h=12, pdf=plotloc + "distr_metr_folddep.pdf")
 
 
@@ -233,11 +206,11 @@ df = MapToomany(features=toomany, n_top=10).fit_transform(df)
 
 
 # Univariate variable importance
-varimp_cate = calc_imp(df.iloc[b_traintest,:], cate)
+varimp_cate = calc_imp(df.query("fold != 'util'"), cate)
 print(varimp_cate)
 
 # Check
-plot_distr(df.iloc[b_traintest,:], cate, varimp=varimp_cate,
+plot_distr(df.query("fold != 'util'"), cate, varimp=varimp_cate,
            ncol=2, nrow=2, w=18, h=12, pdf=plotloc + "distr_cate.pdf")
 
 
@@ -253,11 +226,11 @@ plot_corr(df, cate, cutoff=cutoff_corr, pdf=plotloc + "corr_cate.pdf")
 # --- Time/fold depedency --------------------------------------------------------------------------------------------
 # Hint: In case of having a detailed date variable this can be used as regression target here as well!
 # Univariate variable importance (again ONLY for non-missing observations!)
-varimp_cate_fold = calc_imp(df.iloc[b_traintest,:], cate, "fold_num")
+varimp_cate_fold = calc_imp(df.query("fold != 'util'"), cate, "fold_num")
 
 # Plot: only variables with with highest importance
 cate_toprint = varimp_cate_fold[varimp_cate_fold > cutoff_varimp].index.values
-plot_distr(df.iloc[b_traintest,:], cate_toprint, "fold_num", varimp=varimp_cate_fold,
+plot_distr(df.query("fold != 'util'"), cate_toprint, "fold_num", varimp=varimp_cate_fold,
            ncol=2, nrow=2, w=12, h=8, pdf=plotloc + "distr_cate_folddep.pdf")
 
 
@@ -276,6 +249,9 @@ np.setdiff1d(features, df.columns.values.tolist())
 np.setdiff1d(features_binned, df.columns.values.tolist())
 np.setdiff1d(features_lgbm, df.columns.values.tolist())
 
+
+# --- Remove burned data ----------------------------------------------------------------------------------------
+df = df.query("fold != 'util'")
 
 # --- Save image ------------------------------------------------------------------------------------------------------
 plt.close(fig="all")  # plt.close(plt.gcf())
