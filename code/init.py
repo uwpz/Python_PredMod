@@ -238,14 +238,14 @@ def calc_imp(df, features, target="target"):
     return varimp
 
 
-# Undersample
-def undersample_n(df, n_max_per_level, target="target", random_state=42):
-    b_all = df[target].mean()
-    df = df.groupby(target).apply(lambda x: x.sample(min(n_max_per_level, x.shape[0]),
-                                                     random_state=random_state)) \
-        .reset_index(drop=True)
-    b_sample = df[target].mean()
-    return df, b_sample, b_all
+# # Undersample
+# def undersample_n(df, n_max_per_level, target="target", random_state=42):
+#     b_all = df[target].mean()
+#     df = df.groupby(target).apply(lambda x: x.sample(min(n_max_per_level, x.shape[0]),
+#                                                      random_state=random_state)) \
+#         .reset_index(drop=True)
+#     b_sample = df[target].mean()
+#     return df, b_sample, b_all
 
 
 # Rescale predictions (e.g. to rewind undersampling)
@@ -258,24 +258,24 @@ def scale_predictions(yhat, b_sample=None, b_all=None):
     return yhat_rescaled
 
 
-# Create sparse matrix
-def create_sparse_matrix(df, metr=None, cate=None, df_ref=None):
-    if metr is not None:
-        m_metr = df[metr].to_sparse().to_coo()
-    else:
-        m_metr = None
-    if cate is not None:
-        if df_ref is None:
-            enc = OneHotEncoder()
-        else:
-            enc = OneHotEncoder(categories=[df_ref[x].unique() for x in cate])
-        if len(cate) == 1:
-            m_cate = enc.fit_transform(df[cate].reshape(-1, 1))
-        else:
-            m_cate = enc.fit_transform(df[cate])
-    else:
-        m_cate = None
-    return hstack([m_metr, m_cate], format="csr")
+# # Create sparse matrix
+# def create_sparse_matrix(df, metr=None, cate=None, df_ref=None):
+#     if metr is not None:
+#         m_metr = df[metr].to_sparse().to_coo()
+#     else:
+#         m_metr = None
+#     if cate is not None:
+#         if df_ref is None:
+#             enc = OneHotEncoder()
+#         else:
+#             enc = OneHotEncoder(categories=[df_ref[x].unique() for x in cate])
+#         if len(cate) == 1:
+#             m_cate = enc.fit_transform(df[cate].reshape(-1, 1))
+#         else:
+#             m_cate = enc.fit_transform(df[cate])
+#     else:
+#         m_cate = None
+#     return hstack([m_metr, m_cate], format="csr")
 
 
 # Plot ML-algorithm performance
@@ -558,3 +558,61 @@ class Convert(BaseEstimator, TransformerMixin):
     def transform(self, df):
         df[self.features].astype(self.convert_to)
         return df
+
+
+# Undersample
+class Undersample(BaseEstimator, TransformerMixin):
+    def __init__(self, n_max_per_level, random_state=42):
+        self.n_max_per_level = n_max_per_level
+        self.random_state = random_state
+        self.b_sample = None
+        self.b_all = None
+
+    def fit(self):
+        return self
+
+    def transform(self):
+        return self
+
+    def fit_transform(self, df, target="target"):
+        self.b_all = df[target].mean()
+        df = df.groupby(target).apply(lambda x: x.sample(min(self.n_max_per_level, x.shape[0]),
+                                                         random_state=self.random_state)) \
+            .reset_index(drop=True)
+        self.b_sample = df[target].mean()
+        return df
+
+
+# Create sparse matrix
+class CreateSparseMatrix(BaseEstimator, TransformerMixin):
+    def __init__(self, metr=None, cate=None, df_ref=None):
+        self.metr = metr
+        self.cate = cate
+        self.df_ref = df_ref
+
+    def fit(self):
+        return self
+
+    def transform(self):
+        return self
+
+    def fit_transform(self, df):
+        if self.metr is not None:
+            m_metr = df[self.metr].to_sparse().to_coo()
+        else:
+            m_metr = None
+        if self.cate is not None:
+            if self.df_ref is None:
+                enc = OneHotEncoder()
+            else:
+                enc = OneHotEncoder(categories=[self.df_ref[x].unique() for x in self.cate])
+            if len(self.cate) == 1:
+                m_cate = enc.fit_transform(df[self.cate].reshape(-1, 1))
+            else:
+                m_cate = enc.fit_transform(df[self.cate])
+        else:
+            m_cate = None
+        return hstack([m_metr, m_cate], format="csr")
+
+
+

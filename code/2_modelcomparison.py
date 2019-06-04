@@ -7,6 +7,7 @@
 from init import *
 
 # Specific libraries
+from sklearn.model_selection import GridSearchCV, cross_validate, ShuffleSplit, learning_curve
 from sklearn.ensemble import RandomForestClassifier  # , GradientBoostingClassifier
 from sklearn.linear_model import ElasticNet
 import xgboost as xgb
@@ -16,8 +17,9 @@ import lightgbm as lgbm
 metric = "roc_auc"  # metric for peformance comparison
 
 # Load results from exploration
-df = None
+df = metr = cate = features = features_binned = features_lgbm = None
 load_session("1_explore.pkl")
+
 
 
 # ######################################################################################################################
@@ -26,10 +28,14 @@ load_session("1_explore.pkl")
 
 # --- Sample data ----------------------------------------------------------------------------------------------------
 # Undersample only training data
-df_tmp, b_sample, b_all = undersample_n(df[df["fold"] == "train"], 500)
+under_samp = Undersample(n_max_per_level=500)
+df_tmp = under_samp.fit_transform(df)
+b_all = under_samp.b_all
+b_sample = under_samp.b_sample
+print(b_sample, b_all)
+# df_tmp, b_sample, b_all = undersample_n(df[df["fold"] == "train"], 500)
 df_tune = pd.concat([df_tmp, df.loc[df["fold"] == "test"]], sort=False)
 df_tune.groupby("fold")["target"].describe()
-print(b_sample, b_all)
 
 # Sample from all data (take all but n_maxpersample at most)
 # df_tune, b_sample, b_all = undersample_n(df, 500)
@@ -62,7 +68,7 @@ fit = GridSearchCV(ElasticNet(normalize=True, warm_start=True),
                    scoring=metric,
                    return_train_score=True,
                    n_jobs=4)\
-    .fit(create_sparse_matrix(df_tune, cate=features_binned), df_tune["target"])
+    .fit(CreateSparseMatrix(cate=features_binned).fit_transform(df_tune), df_tune["target"])
 print(fit.best_params_)
 pd.DataFrame.from_dict(fit.cv_results_)\
     .pivot_table(["mean_test_score"], index="param_alpha", columns="param_l1_ratio")\
@@ -71,6 +77,7 @@ pd.DataFrame.from_dict(fit.cv_results_)\
 
 
 # Random Forest
+# noinspection PyTypeChecker
 fit = GridSearchCV(RandomForestClassifier(warm_start=True),
                    [{"n_estimators": [10, 20, 50, 100, 200],
                      "max_features": [x for x in range(1, len(features), 3)]}],
@@ -80,7 +87,7 @@ fit = GridSearchCV(RandomForestClassifier(warm_start=True),
                    return_train_score=True,
                    # use_warm_start=["n_estimators"],
                    n_jobs=4)\
-    .fit(create_sparse_matrix(df_tune, metr, cate), df_tune["target"])
+    .fit(CreateSparseMatrix(metr=metr, cate=cate).fit_transform(df_tune), df_tune["target"])
 print(fit.best_params_)
 pd.DataFrame.from_dict(fit.cv_results_)\
     .pivot_table(["mean_test_score"], index="param_n_estimators", columns="param_max_features")\
@@ -98,7 +105,7 @@ fit = GridSearchCV(xgb.XGBClassifier(warm_start=False),
                    return_train_score=True,
                    # use_warm_start="n_estimators",
                    n_jobs=1) \
-    .fit(create_sparse_matrix(df_tune, metr, cate), df_tune["target"])
+    .fit(CreateSparseMatrix(metr=metr, cate=cate).fit_transform(df_tune), df_tune["target"])
 print(fit.best_params_)
 # -> keep around the recommended values: max_depth = 6, shrinkage = 0.01, n.minobsinnode = 10
 df_fitres = pd.DataFrame.from_dict(fit.cv_results_)
@@ -153,7 +160,7 @@ fit = GridSearchCV(xgb.XGBClassifier(),
                    scoring=metric,
                    return_train_score=True,
                    n_jobs=4) \
-    .fit(create_sparse_matrix(df_gengap, metr, cate), df_gengap["target"])
+    .fit(CreateSparseMatrix(metr=metr, cate=cate).fit_transform(df_gengap), df_gengap["target"])
 df_gengap_result = pd.DataFrame.from_dict(fit.cv_results_)\
     .rename(columns={"mean_test_score": "test",
                      "mean_train_score": "train"})\
@@ -204,7 +211,7 @@ cvresults = cross_validate(
                              scoring=metric,
                              return_train_score=False,
                              n_jobs=4),
-      X=create_sparse_matrix(df_modelcomp, cate=features_binned),
+      X=CreateSparseMatrix(cate=features_binned).fit_transform(df_modelcomp),
       y=df_modelcomp["target"],
       cv=split_my5fold_cv.split(df_modelcomp),
       return_train_score=False,
@@ -223,7 +230,7 @@ cvresults = cross_validate(
                              scoring=metric,
                              return_train_score=False,
                              n_jobs=4),
-      X=create_sparse_matrix(df_modelcomp, metr, cate),
+      X=CreateSparseMatrix(metr=metr, cate=cate).fit_transform(df_modelcomp),
       y=df_modelcomp["target"],
       cv=split_my5fold_cv.split(df_modelcomp),
       return_train_score=False,
@@ -259,7 +266,7 @@ n_train, score_train, score_test = learning_curve(
                              scoring=metric,
                              return_train_score=False,
                              n_jobs=4),
-      X=create_sparse_matrix(df_lc, metr, cate),
+      X=CreateSparseMatrix(metr=metr, cate=cate).fit_transform(df_lc),
       y=df_lc["target"],
       train_sizes=np.append(np.linspace(0.05, 0.1, 5), np.linspace(0.2, 1, 5)),
       cv=split_my1fold_cv.split(df_lc),

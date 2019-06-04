@@ -257,3 +257,23 @@ df = df.query("fold != 'util'")
 plt.close(fig="all")  # plt.close(plt.gcf())
 del df_orig
 dump_session("1_explore.pkl")
+
+
+# from dill import dump
+#
+# file = open('1_explore.pkl', "wb")
+# for x in [metr, cate]:
+#     dump(x, file)
+# file.close()
+#
+# import pickle
+#
+# test1, test2 = ["One", "Two", "Three"], ["1", "2", "3"]
+# with open("C:/temp/test.pickle","wb") as f:
+#     pickle.dump(test1, f)
+#     pickle.dump(test2, f)
+# with open("C:/temp/test.pickle", "rb") as f:
+#     testout1 = pickle.load(f)
+#     testout2 = pickle.load(f)
+#
+# print testout1, testout
