@@ -68,7 +68,7 @@ fit = GridSearchCV(ElasticNet(normalize=True, warm_start=True),
                    scoring=metric,
                    return_train_score=True,
                    n_jobs=4)\
-    .fit(CreateSparseMatrix(cate=features_binned).fit_transform(df_tune), df_tune["target"])
+    .fit(CreateSparseMatrix(cate=features_binned, df_ref=df_tune).fit_transform(df_tune), df_tune["target"])
 print(fit.best_params_)
 pd.DataFrame.from_dict(fit.cv_results_)\
     .pivot_table(["mean_test_score"], index="param_alpha", columns="param_l1_ratio")\
@@ -87,7 +87,7 @@ fit = GridSearchCV(RandomForestClassifier(warm_start=True),
                    return_train_score=True,
                    # use_warm_start=["n_estimators"],
                    n_jobs=4)\
-    .fit(CreateSparseMatrix(metr=metr, cate=cate).fit_transform(df_tune), df_tune["target"])
+    .fit(CreateSparseMatrix(metr=metr, cate=cate, df_ref=df_tune).fit_transform(df_tune), df_tune["target"])
 print(fit.best_params_)
 pd.DataFrame.from_dict(fit.cv_results_)\
     .pivot_table(["mean_test_score"], index="param_n_estimators", columns="param_max_features")\
@@ -105,7 +105,7 @@ fit = GridSearchCV(xgb.XGBClassifier(warm_start=False),
                    return_train_score=True,
                    # use_warm_start="n_estimators",
                    n_jobs=1) \
-    .fit(CreateSparseMatrix(metr=metr, cate=cate).fit_transform(df_tune), df_tune["target"])
+    .fit(CreateSparseMatrix(metr=metr, cate=cate, df_ref=df_tune).fit_transform(df_tune), df_tune["target"])
 print(fit.best_params_)
 # -> keep around the recommended values: max_depth = 6, shrinkage = 0.01, n.minobsinnode = 10
 df_fitres = pd.DataFrame.from_dict(fit.cv_results_)
@@ -160,7 +160,7 @@ fit = GridSearchCV(xgb.XGBClassifier(),
                    scoring=metric,
                    return_train_score=True,
                    n_jobs=4) \
-    .fit(CreateSparseMatrix(metr=metr, cate=cate).fit_transform(df_gengap), df_gengap["target"])
+    .fit(CreateSparseMatrix(metr=metr, cate=cate, df_ref=df_gengap).fit_transform(df_gengap), df_gengap["target"])
 df_gengap_result = pd.DataFrame.from_dict(fit.cv_results_)\
     .rename(columns={"mean_test_score": "test",
                      "mean_train_score": "train"})\
@@ -211,7 +211,7 @@ cvresults = cross_validate(
                              scoring=metric,
                              return_train_score=False,
                              n_jobs=4),
-      X=CreateSparseMatrix(cate=features_binned).fit_transform(df_modelcomp),
+      X=CreateSparseMatrix(cate=features_binned, df_ref=df_modelcomp).fit_transform(df_modelcomp),
       y=df_modelcomp["target"],
       cv=split_my5fold_cv.split(df_modelcomp),
       return_train_score=False,
@@ -230,7 +230,7 @@ cvresults = cross_validate(
                              scoring=metric,
                              return_train_score=False,
                              n_jobs=4),
-      X=CreateSparseMatrix(metr=metr, cate=cate).fit_transform(df_modelcomp),
+      X=CreateSparseMatrix(metr=metr, cate=cate, df_ref=df_modelcomp).fit_transform(df_modelcomp),
       y=df_modelcomp["target"],
       cv=split_my5fold_cv.split(df_modelcomp),
       return_train_score=False,
@@ -266,7 +266,7 @@ n_train, score_train, score_test = learning_curve(
                              scoring=metric,
                              return_train_score=False,
                              n_jobs=4),
-      X=CreateSparseMatrix(metr=metr, cate=cate).fit_transform(df_lc),
+      X=CreateSparseMatrix(metr=metr, cate=cate, df_ref=df_lc).fit_transform(df_lc),
       y=df_lc["target"],
       train_sizes=np.append(np.linspace(0.05, 0.1, 5), np.linspace(0.2, 1, 5)),
       cv=split_my1fold_cv.split(df_lc),

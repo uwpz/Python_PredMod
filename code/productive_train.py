@@ -1,54 +1,26 @@
-
 # ######################################################################################################################
-#  Libraries
-# ######################################################################################################################
-
-# --- Load general libraries  -------------------------------------------------------------------------------------
-# Data
-import numpy as np
-import pandas as pd
-#from dill import (load_session, dump_session)
-
-# Util
-import pdb  # pdb.set_trace()  #quit with "q", next line with "n", continue with "c"
-from os import getcwd
-
-# My
-# import sys; sys.path.append(getcwd() + "\\code") #not needed if code is marked as "source" in pycharm
-from myfunc import *
-
-
-# --- Load specific libraries  -------------------------------------------------------------------------------------
-from sklearn.impute import SimpleImputer
-
-
-# --- Load results, run 0_init  -----------------------------------------------
-exec(open("./code/0_init.py").read())
-
-
-# ######################################################################################################################
-# Initialize
+#  Initialize: Libraries, functions, parameters
 # ######################################################################################################################
 
-# Adapt some default parameter differing per target types (NULL results in default value usage)
-# cutoff_switch = switch(TARGET_TYPE, "CLASS" = 0.1, "REGR" = 0.8, "MULTICLASS" = 0.8)  # adapt
-# ylim_switch = switch(TARGET_TYPE, "CLASS" = NULL, "REGR" = c(0, 250e3), "MULTICLASS" = NULL)  # adapt REGR opt
-cutoff_corr = 0.1
-cutoff_varimp = 0.52
+# General libraries, parameters and functions
+from init import *
+
+# Specific libraries
+from sklearn.pipeline import Pipeline
+import xgboost as xgb
+
+
+# Specific parameters
 
 
 # ######################################################################################################################
 # ETL
 # ######################################################################################################################
 
-# --- Read data and transform ----------------------------------------------------------------------------------------
+# --- Read data  ----------------------------------------------------------------------------------------
 # ABT
-df = pd.read_csv(dataloc + "titanic.csv").iloc[0:1000, :]
-
-#  Feature engineering
-df["deck"] = df["cabin"].str[:1]
-df["familysize"] = df["sibsp"] + df["parch"] + 1
-df["fare_pp"] = df.groupby("ticket")["fare"].transform("mean")
+df = pd.read_csv(dataloc + "titanic.csv").iloc[:1000, :]
+df2 = pd.read_csv(dataloc + "titanic.csv").iloc[1000:, :]
 
 # Read metadata
 df_meta = pd.read_excel(dataloc + "datamodel_titanic.xlsx", header=1)\
@@ -57,50 +29,59 @@ df_meta = pd.read_excel(dataloc + "datamodel_titanic.xlsx", header=1)\
 # Define Target
 df["target"] = df["survived"]
 
+# Define data to be used for target encoding
+df["encode_flag"] = np.random.binomial(1, 0.2, len(df))
 
-# --- Adapt categorical variables ----------------------------------------------------------------------------------
+# Get variable types
 nomi = df_meta.loc[df_meta["type"] == "nomi", "variable"].values
 ordi = df_meta.loc[df_meta["type"] == "ordi", "variable"].values
 cate = np.append(nomi, ordi)
+metr = df_meta.loc[df_meta["type"] == "metr", "variable"].values
 
-# Convert to string
-df[cate].describe(include="all")
-df[cate] = df[cate].astype("str").replace("nan",np.nan)
+df_copy = df.copy()
 
-# Impute "(Missing)"
-imp_const = DfSimpleImputer(features=cate, strategy="constant", fill_value="(Missing)")
-df = imp_const.fit_transform(df)
-
-# Transform non-existing values: Collect information
-map_nonexist = MapNonexisting(features=nomi)
-df = map_nonexist.fit_transform(df, transform=False)
-
-# Create target-encoded features, i.e. numeric representation
-enc_cate = TargetEncoding(features=cate, df4encoding=df, target="target")
-df = enc_cate.fit_transform(df)
-
-# Reduce "toomany-members" categorical features
-map_toomany = MapToomany(features=cate)
-df = map_toomany.fit_transform(df)
-
-from sklearn.pipeline import Pipeline
-pipeline1 = Pipeline([
-    ("cate_imp", DfSimpleImputer(features=cate, strategy="constant", fill_value="(Missing)")),
-    ("cate_map_nonexist", MapNonexisting(features=nomi)),
-    ("cate_enc", TargetEncoding(features=cate, df4encoding=df, target="target")),
-    ("cate_map_toomany", MapToomany(features=cate)),
-    ("metr_imp", DfSimpleImputer(features=metr, strategy="median"))
+# --- ETL -------------------------------------------------------------------------------------------------
+pipeline_etl = Pipeline([
+    ("feature_engineering", FeatureEngineeringTitanic(derive_deck=True,
+                                                      derive_familysize=True,
+                                                      derive_fare_pp=True)),  # feature engineering
+    ("cate_convert", Convert(features=cate, convert_to="str")),  # convert cate to "str"
+    ("metr_convert", Convert(features=metr, convert_to="float")),  # convert metr to "float"
+    ("cate_imp", DfSimpleImputer(features=cate, strategy="constant", fill_value="(Missing)")),  # impute cate with const
+    ("cate_map_nonexist", MapNonexisting(features=cate)),  # transform non-existing values: Collect information
+    ("cate_enc", TargetEncoding(features=cate, encode_flag_column="encode_flag",
+                                target="target")),  # target-encoding
+    ("cate_map_toomany", MapToomany(features=cate)),  # reduce "toomany-members" categorical features
+    ("metr_imp", DfSimpleImputer(features=metr, strategy="median", verbose=1)),  # impute metr with median
+    ("undersmple_n", Undersample(n_max_per_level=500))  # undersample
 ])
-tmp1 = pipeline1.fit_transform(df, cate_map_nonexist__transform=False)
+df = pipeline_etl.fit_transform(df, df["target"], cate_map_nonexist__transform=False)
+df2 = pipeline_etl.transform(df2)
 
 
+# --- Fit ----------------------------------------------------------------------------------
 
-# # --- Adapt metric variables -------------------------------------------------------------------------------------
-# metr = df_meta.loc[df_meta["type"] == "metr", "variable"].values
-#
-# # Impute median
-# imp_median = DfSimpleImputer(features=metr, strategy="median")
-# df = imp_median.fit_transform(df)
+# Tuning parameter to use (for xgb)
+n_estimators = 1100
+learning_rate = 0.01
+max_depth = 3
+min_child_weight = 10
+colsample_bytree = 0.7
+subsample = 0.7
+gamma = 0
+
+# Fit
+pipeline_fit = Pipeline([
+    ("create_sparse_matrix", CreateSparseMatrix(metr=metr, cate=cate, df_ref=df)),
+    ("clf", xgb.XGBClassifier(n_estimators=n_estimators, learning_rate=learning_rate,
+                              max_depth=max_depth, min_child_weight=min_child_weight,
+                              colsample_bytree=colsample_bytree, subsample=subsample,
+                              gamma=0))
+])
+X = pipeline_fit.fit(df, df["target"].values)
+yhat = pipeline_fit.predict_proba(df)
+yhat2 = pipeline_fit.predict_proba(df2)
+
 
 
 

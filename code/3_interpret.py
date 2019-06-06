@@ -1,44 +1,28 @@
 
 # ######################################################################################################################
-#  Libraries
+#  Initialize: Libraries, functions, parameters
 # ######################################################################################################################
 
-# --- Load general libraries  -------------------------------------------------------------------------------------
-# Data
-import numpy as np
-import pandas as pd
-from dill import (load_session, dump_session)
+# General libraries, parameters and functions
+from init import *
 
-# Plot
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_pdf import PdfPages
-import seaborn as sns
-# plt.ioff(); plt.ion()  # Interactive plotting? ion is default
-
-# Util
-import pdb  # pdb.set_trace()  #quit with "q", next line with "n", continue with "c"
-from os import getcwd
-
-# My
-# import sys; sys.path.append(getcwd() + "\\code") #not needed if code is marked as "source" in pycharm
-from myfunc import *
-
-
-# --- Load specific libraries  -------------------------------------------------------------------------------------
-# ML
+# Specific libraries
+from sklearn.model_selection import cross_validate
+from sklearn.base import clone
 import xgboost as xgb
 
+# Specific parameters
+metric = "roc_auc"  # metric for peformance comparison
 
-# --- Load results, run 0_init  -----------------------------------------------
-exec(open("./code/0_init.py").read())
+
+# Load results from exploration
+df = metr = cate = features = features_binned = features_lgbm = None
+load_session("1_explore.pkl")
 
 
 # ######################################################################################################################
-# Initialize
+# Prepare
 # ######################################################################################################################
-
-# Set metric for peformance comparison
-metric = "roc_auc"
 
 # Tuning parameter to use (for xgb)
 n_estimators = 1100
@@ -53,19 +37,23 @@ gamma = 0
 # --- Sample data ----------------------------------------------------------------------------------------------------
 # Training data: Just take data from train fold (take all but n_maxpersample at most)
 df.loc[df["fold"] == "train", "target"].describe()
-df_train, b_sample, b_all = undersample_n(df.loc[df["fold"] == "train", :], 500)
+under_samp = Undersample(n_max_per_level=500)
+df_train = under_samp.fit_transform(df.query("fold == 'train'"))
+b_sample = under_samp.b_sample
+b_all = under_samp.b_all
 print(b_sample, b_all)
 
 # Test data
-df_test = df.loc[df["fold"] == "test"]  # .sample(300) #ATTENTION: Do not sample in final run!!!
+df_test = df.query("fold == 'test'")  # .sample(300) #ATTENTION: Do not sample in final run!!!
 
-# Folds for crossvalidation
+# Combine again
+df_traintest = pd.concat([df_train, df_test])
+
+# Folds for crossvalidation and check
 split_my5fold = TrainTestSep(5, "bootstrap")
-
-# Check
-for i_train, i_test in split_my5fold.split(df):
-    print("TRAIN-fold:", df["fold"][i_train].value_counts())
-    print("TEST-fold:", df["fold"][i_test].value_counts())
+for i_train, i_test in split_my5fold.split(df_traintest):
+    print("TRAIN-fold:", df_traintest["fold"].iloc[i_train].value_counts())
+    print("TEST-fold:", df_traintest["fold"].iloc[i_test].value_counts())
     print("##########")
 
 
@@ -74,18 +62,20 @@ for i_train, i_test in split_my5fold.split(df):
 # ######################################################################################################################
 
 # --- Do the full fit and predict on test data -------------------------------------------------------------------
+
 # Fit
-X_train = create_sparse_matrix(df_train, metr, cate, df_ref=df)
 clf = xgb.XGBClassifier(n_estimators=n_estimators, learning_rate=learning_rate,
                         max_depth=max_depth, min_child_weight=min_child_weight,
                         colsample_bytree=colsample_bytree, subsample=subsample,
                         gamma=0)
-fit = clf.fit(X_train, df_train["target"])
+X_train = CreateSparseMatrix(metr=metr, cate=cate, df_ref=df_traintest).fit_transform(df_train)
+fit = clf.fit(X_train, df_train["target"].values)
 
 # Predict
-X_test = create_sparse_matrix(df_test, metr, cate, df_ref=df)
+X_test = CreateSparseMatrix(metr=metr, cate=cate, df_ref=df_traintest).fit_transform(df_test)
 yhat_test = scale_predictions(fit.predict_proba(X_test), b_sample, b_all)
 pd.DataFrame(yhat_test).describe()
+roc_auc_score(df_test["target"].values, yhat_test[:, 1])
 
 # Plot performance
 plot_all_performances(df_test["target"], yhat_test, pdf=plotloc + "performance.pdf")
@@ -93,8 +83,9 @@ plot_all_performances(df_test["target"], yhat_test, pdf=plotloc + "performance.p
 
 # --- Check performance for crossvalidated fits ---------------------------------------------------------------------
 d_cv = cross_validate(clf,
-                      create_sparse_matrix(df, metr, cate), df["target"],
-                      cv=split_my5fold.split(df),  # special 5fold
+                      CreateSparseMatrix(metr=metr, cate=cate, df_ref=df_traintest).fit_transform(df_traintest),
+                      df_traintest["target"].values,
+                      cv=split_my5fold.split(df_traintest),  # special 5fold
                       scoring=metric, n_jobs=5,
                       return_estimator=True)
 # Performance
@@ -103,20 +94,21 @@ print(d_cv["test_score"])
 
 # --- Most important variables (importance_cum < 95) model fit ------------------------------------------------------
 # Variable importance (on train data!)
-df_varimp_train = calc_varimp_by_permutation(df_train, df, fit, "target", metr, cate, b_sample, b_all)
+df_varimp_train = calc_varimp_by_permutation(df_train, df_traintest, fit, "target", metr, cate, b_sample, b_all)
 
 # Top features (importances sum up to 95% of whole sum)
 features_top = df_varimp_train.loc[df_varimp_train["importance_cum"] < 95, "feature"].values
 
 # Fit again only on features_top
-X_train_top = create_sparse_matrix(df_train, metr[np.in1d(metr, features_top)], cate[np.in1d(cate, features_top)],
-                                   df_ref=df)
+X_train_top = CreateSparseMatrix(metr[np.in1d(metr, features_top)], cate[np.in1d(cate, features_top)],
+                                 df_ref=df_traintest).fit_transform(df_train)
 fit_top = clone(clf).fit(X_train_top, df_train["target"])
 
 # Plot performance
-X_test_top = create_sparse_matrix(df_test, metr[np.in1d(metr, features_top)], cate[np.in1d(cate, features_top)],
-                                  df_ref=df)
+X_test_top = CreateSparseMatrix(metr[np.in1d(metr, features_top)], cate[np.in1d(cate, features_top)],
+                                df_ref=df_traintest).fit_transform(df_test)
 yhat_top = scale_predictions(fit_top.predict_proba(X_test_top), b_sample, b_all)
+roc_auc_score(df_test["target"].values, yhat_top[:, 1])
 plot_all_performances(df_test["target"], yhat_top, pdf=plotloc + "performance_top.pdf")
 
 
@@ -137,7 +129,7 @@ xgb.plot_importance(fit)
 
 # --- Variable Importance by permuation argument -------------------------------------------------------------------
 # Importance for "total" fit (on test data!)
-df_varimp = calc_varimp_by_permutation(df_test, df, fit, "target", metr, cate, b_sample, b_all)
+df_varimp = calc_varimp_by_permutation(df_test, df_traintest, fit, "target", metr, cate, b_sample, b_all)
 topn = 5
 topn_features = df_varimp["feature"].values[range(topn)]
 
@@ -146,8 +138,8 @@ df_varimp["Category"] = pd.cut(df_varimp["importance"], [-np.inf, 10, 50, np.inf
 
 # Crossvalidate Importance: ONLY for topn_vars
 df_varimp_cv = pd.DataFrame()
-for i, (i_train, i_test) in enumerate(split_my5fold.split(df)):
-    df_tmp = calc_varimp_by_permutation(df.iloc[i_train, :], df, d_cv["estimator"][i],
+for i, (i_train, i_test) in enumerate(split_my5fold.split(df_traintest)):
+    df_tmp = calc_varimp_by_permutation(df_traintest.iloc[i_train, :], df_traintest, d_cv["estimator"][i],
                                         "target", metr, cate,
                                         b_sample, b_all,
                                         features=topn_features)
@@ -161,12 +153,14 @@ sns.barplot("importance", "feature", hue="Category", data=df_varimp.iloc[range(t
             dodge=False, palette=sns.xkcd_palette(["blue", "orange", "red"]), ax=ax)
 ax.plot("importance_cum", "feature", data=df_varimp.iloc[range(topn)], color="grey", marker="o")
 ax.set_xlabel(r"importance / cumulative importance in % (-$\bullet$-)")
+# noinspection PyTypeChecker
 ax.set_title("Top{0: .0f} (of{1: .0f}) Feature Importances".format(topn, len(features)))
 fig.tight_layout()
 fig.savefig(plotloc + "variable_importance.pdf")
 
 
 # --- Compare variable importance for train and test (hints to variables prone to overfitting) -------------------------
+fig, ax = plt.subplots(1, 1)
 sns.barplot("importance_sumnormed", "feature", hue="fold",
             data=pd.concat([df_varimp_train.assign(fold="train"), df_varimp.assign(fold="test")], sort=False))
 

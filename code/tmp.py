@@ -1,7 +1,16 @@
 
+import pandas as pd
 
 
-def dummy(**kwargs):
-    print(kwargs)
+def dummy(x):
+    x["c"] = 1
+    #return x
+    return 1
 
-dummy(a=1,b=2)
+df = pd.DataFrame({"a": [1,2], "b": [1,2]})
+df
+
+dummy(df)
+df
+
+

@@ -258,26 +258,6 @@ def scale_predictions(yhat, b_sample=None, b_all=None):
     return yhat_rescaled
 
 
-# # Create sparse matrix
-# def create_sparse_matrix(df, metr=None, cate=None, df_ref=None):
-#     if metr is not None:
-#         m_metr = df[metr].to_sparse().to_coo()
-#     else:
-#         m_metr = None
-#     if cate is not None:
-#         if df_ref is None:
-#             enc = OneHotEncoder()
-#         else:
-#             enc = OneHotEncoder(categories=[df_ref[x].unique() for x in cate])
-#         if len(cate) == 1:
-#             m_cate = enc.fit_transform(df[cate].reshape(-1, 1))
-#         else:
-#             m_cate = enc.fit_transform(df[cate])
-#     else:
-#         m_cate = None
-#     return hstack([m_metr, m_cate], format="csr")
-
-
 # Plot ML-algorithm performance
 def plot_all_performances(y, yhat, w=12, h=8, pdf=None):
     # y=df_test["target"]; yhat=yhat_test; w=12; h=8
@@ -432,7 +412,8 @@ def calc_varimp_by_permutation(df, df_ref, fit,
 
     # Original performance
     perf_orig = roc_auc_score(df[target],
-                              scale_predictions(fit.predict_proba(create_sparse_matrix(df, metr, cate, df_ref)),
+                              scale_predictions(fit.predict_proba(CreateSparseMatrix(metr, cate, df_ref).
+                                                                  fit_transform(df)),
                                                 b_sample, b_all)[:, 1])
 
     # Performance per variable after permutation
@@ -442,7 +423,7 @@ def calc_varimp_by_permutation(df, df_ref, fit,
         df_perm[feature] = df_perm[feature].values[i_perm]
         perf = roc_auc_score(df_perm[target],
                              scale_predictions(
-                                 fit.predict_proba(create_sparse_matrix(df_perm, metr, cate, df_ref)),
+                                 fit.predict_proba(CreateSparseMatrix(metr, cate, df_ref).fit_transform(df_perm)),
                                  b_sample, b_all)[:, 1])
         return perf
     perf = Parallel(n_jobs=n_jobs)(delayed(run_in_parallel)(df, i_perm, feature, metr, cate, df_ref)
@@ -494,7 +475,7 @@ class MapToomany(BaseEstimator, TransformerMixin):
         self._d_top = None
         self._statistics = None
 
-    def fit(self, df):
+    def fit(self, df, y=None):
         self._s_levinfo = df[self.features].apply(lambda x: x.unique().size).sort_values(ascending=False)
         self._toomany = self._s_levinfo[self._s_levinfo > self.n_top].index.values
         self._d_top = {x: df[x].value_counts().index.values[:self.n_top] for x in self._toomany}
@@ -509,40 +490,44 @@ class MapToomany(BaseEstimator, TransformerMixin):
 
 # Target Encoding
 class TargetEncoding(BaseEstimator, TransformerMixin):
-    def __init__(self, features, df4encoding, target="target"):
+    def __init__(self, features, encode_flag_column="use_for_encoding", target="target"):
         self.features = features
-        self.df4encoding = df4encoding
+        self.encode_flag_column = encode_flag_column
         self.target = target
         self._d_map = None
         self._statistics = None
 
-    def fit(self, df):
-        self._d_map = {x: self.df4encoding.groupby(x, as_index=False)[self.target].agg("mean")
-                                          .sort_values(self.target, ascending=False)
-                                          .assign(rank=lambda x: np.arange(len(x)) + 1)
-                                          .set_index(x)
-                                          ["rank"]
-                                          .to_dict() for x in self.features}
+    def fit(self, df, y=None):
+        self._d_map = {x: df.loc[df[self.encode_flag_column] == 1, :]
+                            .groupby(x, as_index=False)[self.target].agg("mean")
+                            .sort_values(self.target, ascending=False)
+                            .assign(rank=lambda x: np.arange(len(x)) + 1)
+                            .set_index(x)
+                            ["rank"]
+                            .to_dict() for x in self.features}
         self._statistics = {"_d_map": self._d_map}
         return self
 
     def transform(self, df):
         df[self.features + "_ENCODED"] = df[self.features].apply(lambda x: x.map(self._d_map[x.name]))
-        return df
+        if self.encode_flag_column in df.columns.values:
+            return df.loc[df[self.encode_flag_column] != 1, :]
+        else:
+            return df
 
 
 # SimpleImputer for data frames
 class DfSimpleImputer(SimpleImputer):
     def __init__(self, features, **kwargs):
-        super(DfSimpleImputer, self).__init__(**kwargs)
+        super().__init__(**kwargs)
         self.features = features
 
-    def fit(self, df, **kwargs):
-        return super(DfSimpleImputer, self).fit(df[self.features], **kwargs)
+    def fit(self, df, y=None, **kwargs):
+        fit = super().fit(df[self.features], **kwargs)
+        return fit
 
     def transform(self, df):
-        df[self.features] = pd.DataFrame(super(DfSimpleImputer, self).transform(df[self.features].values),
-                                         columns=self.features)
+        df[self.features] = super().transform(df[self.features].values)
         return df
 
 
@@ -552,11 +537,13 @@ class Convert(BaseEstimator, TransformerMixin):
         self.features = features
         self.convert_to = convert_to
 
-    def fit(self, df):
+    def fit(self, df, y=None):
         return self
 
     def transform(self, df):
-        df[self.features].astype(self.convert_to)
+        df[self.features] = df[self.features].astype(self.convert_to)
+        if self.convert_to == "str":
+            df[self.features] = df[self.features].replace("nan", np.nan)
         return df
 
 
@@ -568,18 +555,38 @@ class Undersample(BaseEstimator, TransformerMixin):
         self.b_sample = None
         self.b_all = None
 
-    def fit(self):
+    def fit(self, df, y=None):
         return self
 
-    def transform(self):
-        return self
+    def transform(self, df):
+        return df
 
-    def fit_transform(self, df, target="target"):
+    def fit_transform(self, df, y=None, target="target"):
         self.b_all = df[target].mean()
         df = df.groupby(target).apply(lambda x: x.sample(min(self.n_max_per_level, x.shape[0]),
                                                          random_state=self.random_state)) \
-            .reset_index(drop=True)
+            .reset_index(drop=True)\
+            .sample(frac=1).reset_index(drop=True)
         self.b_sample = df[target].mean()
+        return df
+
+
+class FeatureEngineeringTitanic(BaseEstimator, TransformerMixin):
+    def __init__(self, derive_deck=True, derive_familysize=True, derive_fare_pp=True):
+        self.derive_deck = derive_deck
+        self.derive_familysize = derive_familysize
+        self.derive_fare_pp = derive_fare_pp
+
+    def fit(self, df, y=None):
+        return self
+
+    def transform(self, df):
+        if self.derive_deck:
+            df["deck"] = df["cabin"].str[:1]
+        if self.derive_familysize:
+            df["familysize"] = df["sibsp"].astype("int") + df["parch"].astype("int") + 1
+        if self.derive_fare_pp:
+            df["fare_pp"] = df.groupby("ticket")["fare"].transform("mean")
         return df
 
 
@@ -589,30 +596,25 @@ class CreateSparseMatrix(BaseEstimator, TransformerMixin):
         self.metr = metr
         self.cate = cate
         self.df_ref = df_ref
+        self._d_categories = None
 
-    def fit(self):
+    def fit(self, df=None, y=None):
+        if self.cate is not None:
+            self._d_categories = [self.df_ref[x].unique() for x in self.cate]
         return self
 
-    def transform(self):
-        return self
-
-    def fit_transform(self, df):
+    def transform(self, df=None, y=None):
         if self.metr is not None:
             m_metr = df[self.metr].to_sparse().to_coo()
         else:
             m_metr = None
         if self.cate is not None:
-            if self.df_ref is None:
-                enc = OneHotEncoder()
-            else:
-                enc = OneHotEncoder(categories=[self.df_ref[x].unique() for x in self.cate])
+            enc = OneHotEncoder(categories=self._d_categories)
             if len(self.cate) == 1:
-                m_cate = enc.fit_transform(df[self.cate].reshape(-1, 1))
+                m_cate = enc.fit_transform(df[self.cate].reshape(-1, 1), y)
             else:
-                m_cate = enc.fit_transform(df[self.cate])
+                m_cate = enc.fit_transform(df[self.cate], y)
         else:
             m_cate = None
         return hstack([m_metr, m_cate], format="csr")
-
-
 
