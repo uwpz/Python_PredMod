@@ -14,10 +14,10 @@ import xgboost as xgb
 # Specific parameters
 metric = "roc_auc"  # metric for peformance comparison
 
-
 # Load results from exploration
-df = metr = cate = features = features_binned = features_lgbm = None
-load_session("1_explore.pkl")
+with open("1_explore.pkl", "rb") as file:
+    d_vars = pickle.load(file)
+df, metr, cate, features = d_vars["df"], d_vars["metr"], d_vars["cate"], d_vars["features"]
 
 
 # ######################################################################################################################
@@ -177,3 +177,5 @@ sns.barplot("importance_sumnormed", "feature", hue="fold",
 # ######################################################################################################################
 
 # TODOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+
+plt.close("all")

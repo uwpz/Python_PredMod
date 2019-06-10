@@ -1,16 +1,11 @@
 
-import pandas as pd
+from collections import defaultdict
 
 
-def dummy(x):
-    x["c"] = 1
-    #return x
-    return 1
+dd = defaultdict(None, {"1st": "erster"})
+dd.values()
+dd = dd.setdefault(1)
 
-df = pd.DataFrame({"a": [1,2], "b": [1,2]})
-df
+tmp = df.pclass.map(dd)
 
-dummy(df)
-df
-
-
+tmp

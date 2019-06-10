@@ -70,9 +70,11 @@ df["fold"] = np.random.permutation(pd.qcut(np.arange(len(df)), q=[0, 0.1, 0.8, 1
 print(df.fold.value_counts())
 df["fold_num"] = df["fold"].map({"train": 0, "util": 0, "test": 1})
 
-
 # Define the id
 df["id"] = np.arange(len(df)) + 1
+
+# Define data to be used for target encoding
+df["encode_flag"] = np.random.binomial(1, 0.2, len(df))
 
 
 # ######################################################################################################################
@@ -90,7 +92,7 @@ metr_binned = metr + "_BINNED_"
 df[metr_binned] = df[metr].apply(lambda x: pd.qcut(x, 10).astype("str"))
 
 # Convert missings to own level ("(Missing)")
-df[metr_binned] = df[metr_binned].fillna("(Missing)")
+df[metr_binned] = df[metr_binned].replace("nan", np.nan).fillna("(Missing)")
 print(create_values_df(df[metr_binned], 11))
 
 # Remove binned variables with just 1 bin
@@ -193,7 +195,7 @@ print(toomany)
 toomany = np.setdiff1d(toomany, ["xxx", "xxx"])  # set exception for important variables
 
 # Create encoded features (for tree based models), i.e. numeric representation
-df = TargetEncoding(features=cate, df4encoding=df, target="target").fit_transform(df)
+df = TargetEncoding(features=cate, encode_flag_column="encode_flag", target="target").fit_transform(df)
 # df[cate + "_ENCODED"] = df[cate].apply(
 #     lambda x: x.replace(x.value_counts().index.values.tolist(),
 #                         (np.arange(len(x.value_counts())) + 1).tolist()))
@@ -253,27 +255,17 @@ np.setdiff1d(features_lgbm, df.columns.values.tolist())
 # --- Remove burned data ----------------------------------------------------------------------------------------
 df = df.query("fold != 'util'")
 
+
 # --- Save image ------------------------------------------------------------------------------------------------------
 plt.close(fig="all")  # plt.close(plt.gcf())
 del df_orig
-dump_session("1_explore.pkl")
 
-
-# from dill import dump
-#
-# file = open('1_explore.pkl', "wb")
-# for x in [metr, cate]:
-#     dump(x, file)
-# file.close()
-#
-# import pickle
-#
-# test1, test2 = ["One", "Two", "Three"], ["1", "2", "3"]
-# with open("C:/temp/test.pickle","wb") as f:
-#     pickle.dump(test1, f)
-#     pickle.dump(test2, f)
-# with open("C:/temp/test.pickle", "rb") as f:
-#     testout1 = pickle.load(f)
-#     testout2 = pickle.load(f)
-#
-# print testout1, testout
+# Serialize
+with open("1_explore.pkl", "wb") as file:
+    pickle.dump({"df": df,
+                 "metr": metr,
+                 "cate": cate,
+                 "features": features,
+                 "features_binned": features_binned,
+                 "features_lgbm": features_lgbm},
+                file)

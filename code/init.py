@@ -24,10 +24,12 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.impute import SimpleImputer
 
 # Util
+from collections import defaultdict
 from os import getcwd
 import pdb  # pdb.set_trace()  #quit with "q", next line with "n", continue with "c"
 from joblib import Parallel, delayed
 from dill import (load_session, dump_session)
+import pickle
 
 
 # ######################################################################################################################
@@ -509,7 +511,9 @@ class TargetEncoding(BaseEstimator, TransformerMixin):
         return self
 
     def transform(self, df):
-        df[self.features + "_ENCODED"] = df[self.features].apply(lambda x: x.map(self._d_map[x.name]))
+        #pdb.set_trace()
+        df[self.features + "_ENCODED"] = df[self.features].apply(lambda x: x.map(self._d_map[x.name])
+                                                                 .fillna(np.median(list(self._d_map[x.name].values()))))
         if self.encode_flag_column in df.columns.values:
             return df.loc[df[self.encode_flag_column] != 1, :]
         else:
@@ -599,6 +603,8 @@ class CreateSparseMatrix(BaseEstimator, TransformerMixin):
         self._d_categories = None
 
     def fit(self, df=None, y=None):
+        if self.df_ref is None:
+            self.df_ref = df
         if self.cate is not None:
             self._d_categories = [self.df_ref[x].unique() for x in self.cate]
         return self

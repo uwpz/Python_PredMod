@@ -14,13 +14,12 @@ import xgboost as xgb
 
 
 # ######################################################################################################################
-# ETL
+# Fit
 # ######################################################################################################################
 
 # --- Read data  ----------------------------------------------------------------------------------------
 # ABT
 df = pd.read_csv(dataloc + "titanic.csv").iloc[:1000, :]
-df2 = pd.read_csv(dataloc + "titanic.csv").iloc[1000:, :]
 
 # Read metadata
 df_meta = pd.read_excel(dataloc + "datamodel_titanic.xlsx", header=1)\
@@ -30,6 +29,7 @@ df_meta = pd.read_excel(dataloc + "datamodel_titanic.xlsx", header=1)\
 df["target"] = df["survived"]
 
 # Define data to be used for target encoding
+np.random.seed(1234)
 df["encode_flag"] = np.random.binomial(1, 0.2, len(df))
 
 # Get variable types
@@ -38,7 +38,6 @@ ordi = df_meta.loc[df_meta["type"] == "ordi", "variable"].values
 cate = np.append(nomi, ordi)
 metr = df_meta.loc[df_meta["type"] == "metr", "variable"].values
 
-df_copy = df.copy()
 
 # --- ETL -------------------------------------------------------------------------------------------------
 pipeline_etl = Pipeline([
@@ -53,35 +52,25 @@ pipeline_etl = Pipeline([
                                 target="target")),  # target-encoding
     ("cate_map_toomany", MapToomany(features=cate)),  # reduce "toomany-members" categorical features
     ("metr_imp", DfSimpleImputer(features=metr, strategy="median", verbose=1)),  # impute metr with median
-    ("undersmple_n", Undersample(n_max_per_level=500))  # undersample
+    ("undersample_n", Undersample(n_max_per_level=500))  # undersample
 ])
-df = pipeline_etl.fit_transform(df, df["target"], cate_map_nonexist__transform=False)
-df2 = pipeline_etl.transform(df2)
+df = pipeline_etl.fit_transform(df, df["target"].values, cate_map_nonexist__transform=False)
 
 
 # --- Fit ----------------------------------------------------------------------------------
-
-# Tuning parameter to use (for xgb)
-n_estimators = 1100
-learning_rate = 0.01
-max_depth = 3
-min_child_weight = 10
-colsample_bytree = 0.7
-subsample = 0.7
-gamma = 0
-
 # Fit
 pipeline_fit = Pipeline([
     ("create_sparse_matrix", CreateSparseMatrix(metr=metr, cate=cate, df_ref=df)),
-    ("clf", xgb.XGBClassifier(n_estimators=n_estimators, learning_rate=learning_rate,
-                              max_depth=max_depth, min_child_weight=min_child_weight,
-                              colsample_bytree=colsample_bytree, subsample=subsample,
+    ("clf", xgb.XGBClassifier(n_estimators=1100, learning_rate=0.01,
+                              max_depth=3, min_child_weight=10,
+                              colsample_bytree=0.7, subsample=0.7,
                               gamma=0))
 ])
-X = pipeline_fit.fit(df, df["target"].values)
-yhat = pipeline_fit.predict_proba(df)
-yhat2 = pipeline_fit.predict_proba(df2)
+fit = pipeline_fit.fit(df, df["target"].values)
+# yhat = pipeline_fit.predict_proba(df)  # Test it
 
 
-
-
+# --- Save ----------------------------------------------------------------------------------
+with open("productive.pkl", "wb") as f:
+    pickle.dump({"pipeline_etl": pipeline_etl,
+                 "pipeline_fit": pipeline_fit}, f)
