@@ -222,7 +222,7 @@ cate = np.setdiff1d(cate, ["boat"])
 toomany = np.setdiff1d(toomany, ["boat"])
 
 # Remove highly/perfectly (>=99%) correlated (the ones with less levels!)
-plot_corr(df, cate, cutoff=cutoff_corr, pdf=plotloc + "corr_cate.pdf")
+plot_corr(df, cate, cutoff=cutoff_corr, n_cluster=3, pdf=plotloc + "corr_cate.pdf")
 
 
 # --- Time/fold depedency --------------------------------------------------------------------------------------------

@@ -15,6 +15,7 @@ import seaborn as sns
 # ETL
 from scipy.stats import chi2_contingency
 from scipy.sparse import hstack
+from scipy.cluster.hierarchy import ward, dendrogram, fcluster
 
 # ML
 from sklearn.metrics import *
@@ -167,7 +168,7 @@ def plot_distr(df, features, target="target", varimp=None,
 
 
 # Plot correlation
-def plot_corr(df, features, cutoff=0, w=8, h=6, pdf=None):
+def plot_corr(df, features, cutoff=0, n_cluster=5, w=8, h=6, pdf=None):
     # df = df; features = cate; cutoff = 0.1; w=8; h=6; pdf="blub.pdf"
 
     metr = features[df[features].dtypes != "object"]
@@ -199,6 +200,10 @@ def plot_corr(df, features, cutoff=0, w=8, h=6, pdf=None):
     i_bool = (df_corr.max(axis=1) > cutoff).values
     df_corr = df_corr.loc[i_bool, i_bool]
     np.fill_diagonal(df_corr.values, 1)
+
+    # Cluster df_corr
+    new_order = df_corr.columns.values[fcluster(ward(1 - np.triu(df_corr)), n_cluster, criterion='maxclust').argsort()]
+    df_corr = df_corr.loc[new_order, new_order]
 
     # Plot
     fig, ax = plt.subplots(1, 1)
@@ -436,6 +441,47 @@ def calc_varimp_by_permutation(df, df_ref, fit,
         .sort_values(["perf_diff"], ascending=False)\
         .assign(importance=lambda x: 100 * x["perf_diff"] / max(x["perf_diff"]))\
         .assign(importance_cum=lambda x: 100 * x["perf_diff"].cumsum() / sum(x["perf_diff"]))\
+        .assign(importance_sumnormed=lambda x: 100 * x["perf_diff"] / sum(x["perf_diff"]))
+
+    return df_varimp
+
+
+# Variable importance
+def calc_partial_dependence(df, df_ref, fit,
+                            target, metr, cate,
+                            b_sample, b_all,
+                            features=None,
+                            n_jobs=8):
+    # df=df_train;  df_ref=df; target = "target"
+    all_features = np.append(metr, cate)
+    if features is None:
+        features = all_features
+
+    # Original performance
+    perf_orig = roc_auc_score(df[target],
+                              scale_predictions(fit.predict_proba(CreateSparseMatrix(metr, cate, df_ref).
+                                                                  fit_transform(df)),
+                                                b_sample, b_all)[:, 1])
+
+    # Performance per variable after permutation
+    i_perm = np.random.permutation(np.arange(len(df)))  # permutation vector
+
+    def run_in_parallel(df_perm, i_perm, feature, metr, cate, df_ref):
+        df_perm[feature] = df_perm[feature].values[i_perm]
+        perf = roc_auc_score(df_perm[target],
+                             scale_predictions(
+                                 fit.predict_proba(CreateSparseMatrix(metr, cate, df_ref).fit_transform(df_perm)),
+                                 b_sample, b_all)[:, 1])
+        return perf
+
+    perf = Parallel(n_jobs=n_jobs)(delayed(run_in_parallel)(df, i_perm, feature, metr, cate, df_ref)
+                                   for feature in features)
+
+    # Collect performances and calcualte importance
+    df_varimp = pd.DataFrame({"feature": features, "perf_diff": np.maximum(0, perf_orig - perf)}) \
+        .sort_values(["perf_diff"], ascending=False) \
+        .assign(importance=lambda x: 100 * x["perf_diff"] / max(x["perf_diff"])) \
+        .assign(importance_cum=lambda x: 100 * x["perf_diff"].cumsum() / sum(x["perf_diff"])) \
         .assign(importance_sumnormed=lambda x: 100 * x["perf_diff"] / sum(x["perf_diff"]))
 
     return df_varimp
