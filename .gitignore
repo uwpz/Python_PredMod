@@ -3,3 +3,4 @@
 venv/
 *.lnk
 code/__pycache__
+data/census-income.data
