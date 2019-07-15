@@ -4,15 +4,27 @@
 # ######################################################################################################################
 
 # General libraries, parameters and functions
-from init import *
+from initialize import *
 # import sys; sys.path.append(getcwd() + "\\code") #not needed if code is marked as "source" in pycharm
 
 # Specific libraries
 from scipy.stats.mstats import winsorize
 
+# Main parameter
+TARGET_TYPE = "REGR"
+
+if TARGET_TYPE == "CLASS":
+    ylim = None
+    cutoff_corr = 0.1
+    cutoff_varimp = 0.52
+if TARGET_TYPE == "REGR":
+    ylim = (0, 250e3)
+    cutoff_corr = 0.7
+    cutoff_varimp = 0.52
+
 # Specific parameters
-cutoff_corr = 0.1
-cutoff_varimp = 0.52
+
+
 
 
 # ######################################################################################################################
@@ -21,7 +33,11 @@ cutoff_varimp = 0.52
 
 # --- Read data ------------------------------------------------------------------------------------------------------
 # noinspection PyUnresolvedReferences
-df_orig = pd.read_csv(dataloc + "titanic.csv")
+if TARGET_TYPE == "CLASS":
+    df_orig = pd.read_csv(dataloc + "titanic.csv")
+if TARGET_TYPE == "REGR":
+    df_orig = pd.read_csv(dataloc + "AmesHousing.txt", delimiter="\t")
+    df_orig.columns = df_orig.columns.str.replace(" ","_")
 df_orig.describe()
 df_orig.describe(include=["object"])
 
@@ -29,7 +45,12 @@ df_orig.describe(include=["object"])
 # Check some stuff
 df_values = create_values_df(df_orig, 10)
 print(df_values)
-df_orig["survived"].value_counts() / df_orig.shape[0]
+if TARGET_TYPE == "CLASS":
+    df_orig["survived"].value_counts() / df_orig.shape[0]
+if TARGET_TYPE == "REGR":
+    fig, ax = plt.subplots(1, 2)
+    df_orig["SalePrice"].plot.hist(bins=20, ax = ax[0])
+    np.log(df_orig["SalePrice"]).plot.hist(bins=20, ax = ax[1]);
 """
 
 # "Save" original data
@@ -37,7 +58,10 @@ df = df_orig.copy()
 
 
 # --- Read metadata (Project specific) -----------------------------------------------------------------------------
-df_meta = pd.read_excel(dataloc + "datamodel_titanic.xlsx", header=1)
+if TARGET_TYPE == "CLASS":
+    df_meta = pd.read_excel(dataloc + "datamodel_titanic.xlsx", header=1)
+if TARGET_TYPE == "REGR":
+    df_meta = pd.read_excel(dataloc + "datamodel_AmesHousing.xlsx", header=1)
 
 # Check
 print(np.setdiff1d(df.columns.values, df_meta["variable"].values))
@@ -48,11 +72,13 @@ df_meta_sub = df_meta.loc[df_meta["status"].isin(["ready", "derive"])]
 
 
 # --- Feature engineering -----------------------------------------------------------------------------------------
-# df$deck = as.factor(str_sub(df$cabin, 1, 1))
-df["deck"] = df["cabin"].str[:1]
-df["familysize"] = df["sibsp"] + df["parch"] + 1
-df["fare_pp"] = df.groupby("ticket")["fare"].transform("mean")
-df[["deck", "familysize", "fare_pp"]].describe(include="all")
+if TARGET_TYPE == "CLASS":
+    df["deck"] = df["cabin"].str[:1]
+    df["familysize"] = df["sibsp"] + df["parch"] + 1
+    df["fare_pp"] = df.groupby("ticket")["fare"].transform("mean")
+    df[["deck", "familysize", "fare_pp"]].describe(include="all")
+if TARGET_TYPE == "REGR":
+    pass # number of rooms, sqm_per_room, ...
 
 # Check
 print(np.setdiff1d(df_meta["variable"].values, df.columns.values))
@@ -60,7 +86,10 @@ print(np.setdiff1d(df_meta["variable"].values, df.columns.values))
 
 # --- Define target and train/test-fold ----------------------------------------------------------------------------
 # Target
-df["target"] = df["survived"]
+if TARGET_TYPE == "CLASS":
+    df["target"] = df["survived"]
+if TARGET_TYPE == "REGR":
+    df["target"] = df["SalePrice"]
 df["target"].describe()
 
 # Train/Test fold: usually split by time
@@ -89,7 +118,7 @@ df[metr].describe()
 
 # --- Create nominal variables for all metric variables (for linear models) before imputing -------------------------
 metr_binned = metr + "_BINNED_"
-df[metr_binned] = df[metr].apply(lambda x: pd.qcut(x, 10).astype("str"))
+df[metr_binned] = df[metr].apply(lambda x: pd.qcut(x, 10, duplicates="drop").astype("str"))
 
 # Convert missings to own level ("(Missing)")
 df[metr_binned] = df[metr_binned].replace("nan", np.nan).fillna("(Missing)")
@@ -110,25 +139,31 @@ metr = np.setdiff1d(metr, remove)  # adapt metadata
 metr_binned = np.setdiff1d(metr_binned, remove + "_BINNED_")  # keep "binned" version in sync
 
 # Check for outliers and skewness
-plot_distr(df.query("fold != 'util'"), metr, ncol=2, nrow=2)
+plot_distr(df.query("fold != 'util'"), metr, target_type=TARGET_TYPE, ylim=ylim,
+           ncol=3, nrow=2, w=12, h=8, pdf=plotloc + TARGET_TYPE + "_distr_metr.pdf")
 
 # Winsorize
 df[metr] = df[metr].apply(lambda x: winsorize(x, (0.01, 0.01)))  # hint: plot again before deciding for log-trafo
 
 # Log-Transform
-tolog = np.array(["fare"], dtype="object")
+if TARGET_TYPE == "CLASS":
+    tolog = np.array(["fare"], dtype="object")
+if TARGET_TYPE == "REGR":
+    tolog = np.array(["Lot_Area"], dtype="object")
 df[tolog + "_LOG_"] = df[tolog].apply(lambda x: np.log(x - max(0, np.min(x)) + 1))
 np.place(metr, np.isin(metr, tolog), tolog + "_LOG_")  # adapt metadata (keep order)
 
 
 # --- Final variable information ------------------------------------------------------------------------------------
 # Univariate variable importance
-varimp_metr = calc_imp(df.query("fold != 'util'"), metr)
+varimp_metr = calc_imp(df.query("fold != 'util'"), metr, target_type=TARGET_TYPE)
 print(varimp_metr)
+varimp_metr_binned = calc_imp(df.query("fold != 'util'"), metr_binned, target_type=TARGET_TYPE)
+print(varimp_metr_binned)
 
 # Plot 
-plot_distr(df.query("fold != 'util'"), metr, varimp=varimp_metr,
-           ncol=2, nrow=2, w=18, h=12, pdf=plotloc + "distr_metr.pdf")
+plot_distr(df.query("fold != 'util'"), metr, varimp=varimp_metr, target_type=TARGET_TYPE, ylim=ylim,
+           ncol=3, nrow=2, w=12, h=8, pdf=plotloc + TARGET_TYPE + "_distr_metr.pdf")
 
 
 # --- Removing variables -------------------------------------------------------------------------------------------
@@ -139,7 +174,7 @@ metr_binned = np.setdiff1d(metr_binned, remove + "_BINNED")  # keep "binned" ver
 
 # Remove highly/perfectly (>=98%) correlated (the ones with less NA!)
 df[metr].describe()
-plot_corr(df, metr, cutoff=cutoff_corr, pdf=plotloc + "corr_metr.pdf")
+plot_corr(df, metr, cutoff=cutoff_corr, pdf=plotloc + TARGET_TYPE + "_corr_metr.pdf")
 remove = np.array(["xxx", "xxx"], dtype="object")
 metr = np.setdiff1d(metr, remove)
 metr_binned = np.setdiff1d(metr_binned, remove + "_BINNED")  # keep "binned" version in sync
@@ -148,13 +183,13 @@ metr_binned = np.setdiff1d(metr_binned, remove + "_BINNED")  # keep "binned" ver
 # --- Time/fold depedency --------------------------------------------------------------------------------------------
 # Hint: In case of having a detailed date variable this can be used as regression target here as well!
 
-# Univariate variable importance (again ONLY for non-missing observations!)
-varimp_metr_fold = calc_imp(df.query("fold != 'util'"), metr, "fold_num")
-
-# Plot: only variables with with highest importance
-metr_toprint = varimp_metr_fold[varimp_metr_fold > cutoff_varimp].index.values
-plot_distr(df.query("fold != 'util'"), metr_toprint, "fold_num", varimp=varimp_metr_fold,
-           ncol=2, nrow=2, w=18, h=12, pdf=plotloc + "distr_metr_folddep.pdf")
+# # Univariate variable importance (again ONLY for non-missing observations!)
+# varimp_metr_fold = calc_imp(df.query("fold != 'util'"), metr, "fold_num")
+#
+# # Plot: only variables with with highest importance
+# metr_toprint = varimp_metr_fold[varimp_metr_fold > cutoff_varimp].index.values
+# plot_distr(df.query("fold != 'util'"), metr_toprint, "fold_num", varimp=varimp_metr_fold, target_type="CLASS",
+#            ncol=2, nrow=2, w=12, h=8, pdf=plotloc + TARGET_TYPE + "_distr_metr_folddep.pdf")
 
 
 # --- Missing indicator and imputation (must be done at the end of all processing)------------------------------------
@@ -208,21 +243,21 @@ df = MapToomany(features=toomany, n_top=10).fit_transform(df)
 
 
 # Univariate variable importance
-varimp_cate = calc_imp(df.query("fold != 'util'"), cate)
+varimp_cate = calc_imp(df.query("fold != 'util'"), cate, target_type=TARGET_TYPE)
 print(varimp_cate)
 
 # Check
-plot_distr(df.query("fold != 'util'"), cate, varimp=varimp_cate,
-           ncol=2, nrow=2, w=18, h=12, pdf=plotloc + "distr_cate.pdf")
+plot_distr(df.query("fold != 'util'"), cate, varimp=varimp_cate, target_type=TARGET_TYPE,
+           nrow=2, ncol=3, w=18, h=12, pdf=plotloc + TARGET_TYPE + "_distr_cate.pdf")
 
 
 # --- Removing variables ---------------------------------------------------------------------------------------------
 # Remove leakage variables
-cate = np.setdiff1d(cate, ["boat"])
-toomany = np.setdiff1d(toomany, ["boat"])
+cate = np.setdiff1d(cate, ["xxx"])
+toomany = np.setdiff1d(toomany, ["xxx"])
 
 # Remove highly/perfectly (>=99%) correlated (the ones with less levels!)
-plot_corr(df, cate, cutoff=cutoff_corr, n_cluster=3, pdf=plotloc + "corr_cate.pdf")
+plot_corr(df, cate, cutoff=cutoff_corr, n_cluster=3, pdf=plotloc + TARGET_TYPE + "_corr_cate.pdf")
 
 
 # --- Time/fold depedency --------------------------------------------------------------------------------------------
@@ -232,8 +267,8 @@ varimp_cate_fold = calc_imp(df.query("fold != 'util'"), cate, "fold_num")
 
 # Plot: only variables with with highest importance
 cate_toprint = varimp_cate_fold[varimp_cate_fold > cutoff_varimp].index.values
-plot_distr(df.query("fold != 'util'"), cate_toprint, "fold_num", varimp=varimp_cate_fold,
-           ncol=2, nrow=2, w=12, h=8, pdf=plotloc + "distr_cate_folddep.pdf")
+plot_distr(df.query("fold != 'util'"), cate_toprint, "fold_num", varimp=varimp_cate_fold, target_type="CLASS",
+           ncol=2, nrow=2, w=12, h=8, pdf=plotloc + TARGET_TYPE + "_distr_cate_folddep.pdf")
 
 
 ########################################################################################################################
@@ -261,7 +296,7 @@ plt.close(fig="all")  # plt.close(plt.gcf())
 del df_orig
 
 # Serialize
-with open("1_explore.pkl", "wb") as file:
+with open(TARGET_TYPE + "1_explore.pkl", "wb") as file:
     pickle.dump({"df": df,
                  "metr": metr,
                  "cate": cate,
