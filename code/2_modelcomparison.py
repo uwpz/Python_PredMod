@@ -4,20 +4,27 @@
 # ######################################################################################################################
 
 # General libraries, parameters and functions
-from init import *
+from initialize import *
 
 # Specific libraries
 from sklearn.model_selection import GridSearchCV, cross_validate, ShuffleSplit, learning_curve
+from sklearn.metrics import make_scorer
 from sklearn.ensemble import RandomForestClassifier  # , GradientBoostingClassifier
 from sklearn.linear_model import ElasticNet
 import xgboost as xgb
 import lightgbm as lgbm
 
+# Main parameter
+TARGET_TYPE = "REGR"
+
 # Specific parameters
-metric = "roc_auc"  # metric for peformance comparison
+if TARGET_TYPE == "CLASS":
+    metric = "roc_auc" # metric for peformance comparison
+if TARGET_TYPE == "REGR":
+    metric = make_scorer(spearman_loss_func, greater_is_better=True)
 
 # Load results from exploration
-with open("1_explore.pkl", "rb") as file:
+with open(TARGET_TYPE + "1_explore.pkl", "rb") as file:
     d_vars = pickle.load(file)
 df, metr, cate, features, features_binned, features_lgbm = \
     d_vars["df"], d_vars["metr"], d_vars["cate"], d_vars["features"], d_vars["features_binned"], d_vars["features_lgbm"]
@@ -28,18 +35,19 @@ df, metr, cate, features, features_binned, features_lgbm = \
 # ######################################################################################################################
 
 # --- Sample data ----------------------------------------------------------------------------------------------------
-# Undersample only training data
-under_samp = Undersample(n_max_per_level=500)
-df_tmp = under_samp.fit_transform(df)
-b_all = under_samp.b_all
-b_sample = under_samp.b_sample
-print(b_sample, b_all)
-# df_tmp, b_sample, b_all = undersample_n(df[df["fold"] == "train"], 500)
-df_tune = pd.concat([df_tmp, df.loc[df["fold"] == "test"]], sort=False)
-df_tune.groupby("fold")["target"].describe()
+if TARGET_TYPE == "CLASS":
+    # Undersample only training data (take all but n_maxpersample at most)
+    under_samp = Undersample(n_max_per_level=500)
+    df_tmp = under_samp.fit_transform(df)
+    b_all = under_samp.b_all
+    b_sample = under_samp.b_sample
+    print(b_sample, b_all)
+    # df_tmp, b_sample, b_all = undersample_n(df[df["fold"] == "train"], 500)
+    df_tune = pd.concat([df_tmp, df.loc[df["fold"] == "test"]], sort=False)
+    df_tune.groupby("fold")["target"].describe()
 
-# Sample from all data (take all but n_maxpersample at most)
-# df_tune, b_sample, b_all = undersample_n(df, 500)
+if TARGET_TYPE == "REGR":
+    df_tune = df.sample(n=min(df.shape[0], int(5e3)))
 
 
 # --- Define some splits -------------------------------------------------------------------------------------------
@@ -58,6 +66,7 @@ df_tune["fold"].iloc[i_test].describe()
 i_test.sort()
 i_test
 '''
+
 
 # --- Fits -----------------------------------------------------------------------------------------------------------
 # Lasso / Elastic Net
@@ -80,8 +89,8 @@ pd.DataFrame.from_dict(fit.cv_results_)\
 # Random Forest
 # noinspection PyTypeChecker
 fit = GridSearchCV(RandomForestClassifier(warm_start=True),
-                   [{"n_estimators": [10, 20, 50, 100, 200],
-                     "max_features": [x for x in range(1, len(features), 3)]}],
+                   [{"n_estimators": [10, 20],
+                     "max_features": [x for x in range(1, len(features), 5)]}],
                    cv=split_my1fold_cv.split(df_tune),
                    refit=False,
                    scoring=metric,
@@ -97,15 +106,15 @@ pd.DataFrame.from_dict(fit.cv_results_)\
 
 
 # XGBoost
-fit = GridSearchCV(xgb.XGBClassifier(warm_start=False),
-                   [{"n_estimators": [x for x in range(100, 1100, 200)], "learning_rate": [0.01, 0.02],
-                     "max_depth": [2, 3], "min_child_weight": [5, 10]}],
+fit = GridSearchCV(xgb.Regressor() if TARGET_TYPE == "REGR" else xgb.Classifier(),
+                   [{"n_estimators": [x for x in range(100,3100,500)], "learning_rate": [0.01],
+                     "max_depth": [3,6], "min_child_weight": [5,10]}],
                    cv=split_my1fold_cv.split(df_tune),
                    refit=False,
                    scoring=metric,
                    return_train_score=True,
                    # use_warm_start="n_estimators",
-                   n_jobs=1) \
+                   n_jobs=4) \
     .fit(CreateSparseMatrix(metr=metr, cate=cate, df_ref=df_tune).fit_transform(df_tune), df_tune["target"])
 print(fit.best_params_)
 # -> keep around the recommended values: max_depth = 6, shrinkage = 0.01, n.minobsinnode = 10
@@ -119,9 +128,9 @@ sns.FacetGrid(df_fitres, col="param_min_child_weight", margin_titles=True) \
 
 
 # LightGBM
-fit = GridSearchCV(lgbm.LGBMClassifier(),
+fit = GridSearchCV(lgbm.LGBMRegressor() if TARGET_TYPE == "REGR" else lgbm.LGBMClassifier(),
                    [{"n_estimators": [x for x in range(100, 3100, 500)], "learning_rate": [0.01],
-                     "num_leaves": [8, 32], "min_child_samples": [10]}],
+                     "num_leaves": [8,32,64], "min_child_samples": [5,10]}],
                    cv=split_my1fold_cv.split(df_tune),
                    refit=False,
                    scoring=metric,
@@ -154,7 +163,7 @@ param_grid = [{"n_estimators": [x for x in range(100, 1100, 200)], "learning_rat
                "gamma": [10]}]
 
 # Calc generalization gap
-fit = GridSearchCV(xgb.XGBClassifier(),
+fit = GridSearchCV(xgb.XGBRegressor() if TARGET_TYPE == "REGR" else xgb.XGBClassifier(),
                    param_grid,
                    cv=split_my1fold_cv.split(df_gengap),
                    refit=False,
@@ -170,7 +179,7 @@ df_gengap_result = pd.DataFrame.from_dict(fit.cv_results_)\
 
 
 # Plot generalization gap
-pdf_pages = PdfPages(plotloc + "gengap.pdf")
+pdf_pages = PdfPages(plotloc + TARGET_TYPE + "_gengap.pdf")
 sns.FacetGrid(df_gengap_result, col="param_min_child_weight", row="param_gamma",
               margin_titles=True, height=5) \
     .map(sns.lineplot, "param_n_estimators", "train_test_score_diff",
@@ -223,7 +232,7 @@ df_modelcomp_result = df_modelcomp_result.append(pd.DataFrame.from_dict(cvresult
 
 # Xgboost
 cvresults = cross_validate(
-      estimator=GridSearchCV(xgb.XGBClassifier(),
+      estimator=GridSearchCV(xgb.XGBRegressor() if TARGET_TYPE == "REGR" else xgb.XGBClassifier(),
                              [{"n_estimators": [x for x in range(100, 1100, 200)], "learning_rate": [0.01],
                                "max_depth": [6], "min_child_weight": [10]}],
                              cv=ShuffleSplit(1, 0.2, random_state=999),  # just 1-fold for tuning
@@ -247,7 +256,7 @@ sns.boxplot(data=df_modelcomp_result, x="model", y="test_score", ax=ax)
 sns.lineplot(data=df_modelcomp_result, x="model", y="test_score",
              hue="#" + df_modelcomp_result["index"].astype("str"), linewidth=0.5, linestyle=":",
              legend=None, ax=ax)
-fig.savefig(plotloc + "model_comparison.pdf")
+fig.savefig(plotloc + TARGET_TYPE + "_model_comparison.pdf")
 
 
 # ######################################################################################################################
@@ -259,9 +268,9 @@ df_lc = df
 
 # Calc learning curve
 n_train, score_train, score_test = learning_curve(
-      estimator=GridSearchCV(xgb.XGBClassifier(),
+      estimator=GridSearchCV(xgb.XGBRegressor() if TARGET_TYPE == "REGR" else xgb.XGBClassifier(),
                              [{"n_estimators": [x for x in range(100, 1100, 200)], "learning_rate": [0.01],
-                               "max_depth": [6], "min_child_weight": [10]}],
+                               "max_depth": [3], "min_child_weight": [10]}],
                              cv=ShuffleSplit(1, 0.2, random_state=999),  # just 1-fold for tuning
                              refit=True,
                              scoring=metric,
@@ -279,7 +288,7 @@ df_lc_result = pd.DataFrame(zip(n_train, score_train[:, 0], score_test[:, 0]),
 # Plot learning curve
 fig, ax = plt.subplots(1, 1)
 sns.lineplot(x="n_train", y="score", hue="fold", data=df_lc_result, marker="o", ax=ax)
-fig.savefig(plotloc + "learningCurve.pdf")
+fig.savefig(plotloc + TARGET_TYPE + "_learningCurve.pdf")
 
 
 plt.close("all")

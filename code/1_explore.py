@@ -17,10 +17,12 @@ if TARGET_TYPE == "CLASS":
     ylim = None
     cutoff_corr = 0.1
     cutoff_varimp = 0.52
+    color = twocol
 if TARGET_TYPE == "REGR":
     ylim = (0, 250e3)
     cutoff_corr = 0.7
     cutoff_varimp = 0.52
+    color = None
 
 # Specific parameters
 
@@ -139,7 +141,7 @@ metr = np.setdiff1d(metr, remove)  # adapt metadata
 metr_binned = np.setdiff1d(metr_binned, remove + "_BINNED_")  # keep "binned" version in sync
 
 # Check for outliers and skewness
-plot_distr(df.query("fold != 'util'"), metr, target_type=TARGET_TYPE, ylim=ylim,
+plot_distr(df.query("fold != 'util'"), metr, target_type=TARGET_TYPE, color=color, ylim=ylim,
            ncol=3, nrow=2, w=12, h=8, pdf=plotloc + TARGET_TYPE + "_distr_metr.pdf")
 
 # Winsorize
@@ -162,7 +164,7 @@ varimp_metr_binned = calc_imp(df.query("fold != 'util'"), metr_binned, target_ty
 print(varimp_metr_binned)
 
 # Plot 
-plot_distr(df.query("fold != 'util'"), metr, varimp=varimp_metr, target_type=TARGET_TYPE, ylim=ylim,
+plot_distr(df.query("fold != 'util'"), metr, varimp=varimp_metr, target_type=TARGET_TYPE, color=twocol, ylim=ylim,
            ncol=3, nrow=2, w=12, h=8, pdf=plotloc + TARGET_TYPE + "_distr_metr.pdf")
 
 
@@ -247,7 +249,7 @@ varimp_cate = calc_imp(df.query("fold != 'util'"), cate, target_type=TARGET_TYPE
 print(varimp_cate)
 
 # Check
-plot_distr(df.query("fold != 'util'"), cate, varimp=varimp_cate, target_type=TARGET_TYPE,
+plot_distr(df.query("fold != 'util'"), cate, varimp=varimp_cate, target_type=TARGET_TYPE, color=color,
            nrow=2, ncol=3, w=18, h=12, pdf=plotloc + TARGET_TYPE + "_distr_cate.pdf")
 
 
@@ -257,7 +259,7 @@ cate = np.setdiff1d(cate, ["xxx"])
 toomany = np.setdiff1d(toomany, ["xxx"])
 
 # Remove highly/perfectly (>=99%) correlated (the ones with less levels!)
-plot_corr(df, cate, cutoff=cutoff_corr, n_cluster=3, pdf=plotloc + TARGET_TYPE + "_corr_cate.pdf")
+plot_corr(df, cate, cutoff=cutoff_corr, n_cluster=5, pdf=plotloc + TARGET_TYPE + "_corr_cate.pdf")
 
 
 # --- Time/fold depedency --------------------------------------------------------------------------------------------
@@ -296,7 +298,7 @@ plt.close(fig="all")  # plt.close(plt.gcf())
 del df_orig
 
 # Serialize
-with open(TARGET_TYPE + "1_explore.pkl", "wb") as file:
+with open(TARGET_TYPE + "_1_explore.pkl", "wb") as file:
     pickle.dump({"df": df,
                  "metr": metr,
                  "cate": cate,

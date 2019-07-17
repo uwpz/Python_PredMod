@@ -25,6 +25,7 @@ from sklearn.calibration import calibration_curve
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.impute import SimpleImputer
 
+
 # Util
 from collections import defaultdict
 from os import getcwd
@@ -48,6 +49,9 @@ pd.set_option('display.width', 320)
 pd.set_option('display.max_columns', 20)
 # plt.ioff(); plt.ion()  # Interactive plotting? ion is default
 
+# Other
+twocol = ["red", "green"]
+
 
 # ######################################################################################################################
 # My Functions
@@ -59,6 +63,11 @@ pd.set_option('display.max_columns', 20)
 
 # def union(a, b):
 #     return a + [x for x in b if x not in set(a)]
+
+def spearman_loss_func(y_true, y_pred):
+    spear = pd.DataFrame({"y_true": y_true, "y_pred": y_pred}).corr(method="spearman").values[0, 1]
+    return spear
+
 
 # Overview of values 
 def create_values_df(df, topn):
@@ -77,7 +86,7 @@ def show_figure(fig):
     
 
 # Plot distribution regarding target
-def plot_distr(df, features, target="target", target_type="CLASS", varimp=None, ylim=None,
+def plot_distr(df, features, target="target", target_type="CLASS", color=["blue","red"], varimp=None, ylim=None,
                nrow=1, ncol=1, w=8, h=6, pdf=None):
     # df = df; features = cate; target = "target"; target_type="REGR";  varimp=None;
     # ylim = [0, 250e3]
@@ -113,7 +122,8 @@ def plot_distr(df, features, target="target", target_type="CLASS", varimp=None, 
                     if target_type == "CLASS":
                         # Target barplot
                         # sns.barplot(df_tmp.h, df_tmp[cate[page * ppp + i]], orient="h", color="coral", ax=axact)
-                        ax_act.barh(df_plot[feature_act], df_plot.h, height=df_plot.new_w, edgecolor="black")
+                        ax_act.barh(df_plot[feature_act], df_plot.h, height=df_plot.new_w,
+                                    color=color[1], edgecolor="black")
                         ax_act.set_xlabel("Proportion Target = Y")
                     if target_type == "REGR":
                         # Target boxplot
@@ -139,8 +149,8 @@ def plot_distr(df, features, target="target", target_type="CLASS", varimp=None, 
                 # Metric feature
                 else:
                     if target_type == "CLASS":
-                        sns.distplot(df.loc[df[target] == 1, feature_act].dropna(), color="red", label="1", ax=ax_act)
-                        sns.distplot(df.loc[df[target] == 0, feature_act].dropna(), color="blue", label="0", ax=ax_act)
+                        sns.distplot(df.loc[df[target] == 1, feature_act].dropna(), color=color[1], label="1", ax=ax_act)
+                        sns.distplot(df.loc[df[target] == 0, feature_act].dropna(), color=color[0], label="0", ax=ax_act)
                         # sns.FacetGrid(df, hue=target, palette=["red","blue"])\
                         #     .map(sns.distplot, metr[i])\
                         #     .add_legend() # does not work for multiple axes
@@ -148,7 +158,7 @@ def plot_distr(df, features, target="target", target_type="CLASS", varimp=None, 
                             ax_act.set_title(feature_act + " (VI:" + str(varimp[feature_act]) + ")")
                         ax_act.set_ylabel("density")
                         ax_act.set_xlabel(feature_act + "(NA: " +
-                                          str(df[feature_act].isnull().mean().round(3) * 100) +
+                                          str((df[feature_act].isnull().mean() * 100).round(1)) +
                                           "%)")
 
                         # Inner Boxplot
@@ -160,7 +170,8 @@ def plot_distr(df, features, target="target", target_type="CLASS", varimp=None, 
                         i_bool = df[feature_act].notnull()
                         sns.boxplot(x=df.loc[i_bool, feature_act],
                                     y=df.loc[i_bool, target].astype("category"),
-                                    palette=["blue", "red"],
+                                    #order=df[feature_act].value_counts().index.values[::-1],
+                                    palette=color,
                                     ax=inset_ax)
                         ax_act.legend(title=target, loc="best")
 
@@ -180,6 +191,7 @@ def plot_distr(df, features, target="target", target_type="CLASS", varimp=None, 
                         if varimp is not None:
                             ax_act.set_title(feature_act + " (VI:" + str(varimp[feature_act]) + ")")
                         ax_act.set_ylabel("target")
+                        pd
                         ax_act.set_xlabel(feature_act + "(NA: " +
                                           str(df[feature_act].isnull().mean().round(3) * 100) +
                                           "%)")
@@ -263,6 +275,10 @@ def plot_corr(df, features, cutoff=0, n_cluster=5, w=8, h=6, pdf=None):
     sns.heatmap(df_corr, annot=True, fmt=".2f", cmap="Blues", ax=ax_act)
     ax_act.set_yticklabels(labels=ax_act.get_yticklabels(), rotation=0)
     ax_act.set_xticklabels(labels=ax_act.get_xticklabels(), rotation=90)
+    if len(metr):
+        ax_act.set_title("Absolute spearman correlation (cutoff at " + str(cutoff) +")")
+    if len(cate):
+        ax_act.set_title("Contingency coefficient (cutoff at " + str(cutoff) + ")")
     fig.set_size_inches(w=w, h=h)
     fig.tight_layout()
     if pdf is not None:
