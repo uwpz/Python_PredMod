@@ -11,11 +11,17 @@ from sklearn.model_selection import cross_validate
 from sklearn.base import clone
 import xgboost as xgb
 
+# Main parameter
+TARGET_TYPE = "REGR"
+
 # Specific parameters
-metric = "roc_auc"  # metric for peformance comparison
+if TARGET_TYPE == "CLASS":
+    metric = "roc_auc" # metric for peformance comparison
+if TARGET_TYPE == "REGR":
+    metric = make_scorer(spearman_loss_func, greater_is_better=True)
 
 # Load results from exploration
-with open("1_explore.pkl", "rb") as file:
+with open(TARGET_TYPE + "_1_explore.pkl", "rb") as file:
     d_vars = pickle.load(file)
 df, metr, cate, features = d_vars["df"], d_vars["metr"], d_vars["cate"], d_vars["features"]
 
@@ -35,13 +41,18 @@ gamma = 0
 
 
 # --- Sample data ----------------------------------------------------------------------------------------------------
-# Training data: Just take data from train fold (take all but n_maxpersample at most)
-df.loc[df["fold"] == "train", "target"].describe()
-under_samp = Undersample(n_max_per_level=500)
-df_train = under_samp.fit_transform(df.query("fold == 'train'"))
-b_sample = under_samp.b_sample
-b_all = under_samp.b_all
-print(b_sample, b_all)
+if TARGET_TYPE == "CLASS":
+    # Training data: Just take data from train fold (take all but n_maxpersample at most)
+    df.loc[df["fold"] == "train", "target"].describe()
+    under_samp = Undersample(n_max_per_level=500)
+    df_train = under_samp.fit_transform(df.query("fold == 'train'"))
+    b_sample = under_samp.b_sample
+    b_all = under_samp.b_all
+    print(b_sample, b_all)
+
+if TARGET_TYPE == "REGR":
+    df_train = df.query("fold == 'train'").sample(n=min(df.query("fold == 'train'").shape[0], int(5e3)))
+
 
 # Test data
 df_test = df.query("fold == 'test'")  # .sample(300) #ATTENTION: Do not sample in final run!!!
@@ -50,7 +61,7 @@ df_test = df.query("fold == 'test'")  # .sample(300) #ATTENTION: Do not sample i
 df_traintest = pd.concat([df_train, df_test])
 
 # Folds for crossvalidation and check
-split_my5fold = TrainTestSep(5, "bootstrap")
+split_my5fold = TrainTestSep(5, "cv")
 for i_train, i_test in split_my5fold.split(df_traintest):
     print("TRAIN-fold:", df_traintest["fold"].iloc[i_train].value_counts())
     print("TEST-fold:", df_traintest["fold"].iloc[i_test].value_counts())
@@ -64,21 +75,34 @@ for i_train, i_test in split_my5fold.split(df_traintest):
 # --- Do the full fit and predict on test data -------------------------------------------------------------------
 
 # Fit
-clf = xgb.XGBClassifier(n_estimators=n_estimators, learning_rate=learning_rate,
-                        max_depth=max_depth, min_child_weight=min_child_weight,
-                        colsample_bytree=colsample_bytree, subsample=subsample,
-                        gamma=0)
+if TARGET_TYPE == "CLASS":
+    clf = xgb.XGBClassifier(n_estimators=n_estimators, learning_rate=learning_rate,
+                            max_depth=max_depth, min_child_weight=min_child_weight,
+                            colsample_bytree=colsample_bytree, subsample=subsample,
+                            gamma=0)
+if TARGET_TYPE == "REGR":
+    clf = xgb.XGBRegressor(n_estimators=n_estimators, learning_rate=learning_rate,
+                           max_depth=max_depth, min_child_weight=min_child_weight,
+                           colsample_bytree=colsample_bytree, subsample=subsample,
+                           gamma=0)
 X_train = CreateSparseMatrix(metr=metr, cate=cate, df_ref=df_traintest).fit_transform(df_train)
 fit = clf.fit(X_train, df_train["target"].values)
 
 # Predict
 X_test = CreateSparseMatrix(metr=metr, cate=cate, df_ref=df_traintest).fit_transform(df_test)
-yhat_test = scale_predictions(fit.predict_proba(X_test), b_sample, b_all)
+if TARGET_TYPE == "CLASS":
+    yhat_test = scale_predictions(fit.predict_proba(X_test), b_sample, b_all)
+if TARGET_TYPE == "REGR":
+    yhat_test = fit.predict(X_test)
 pd.DataFrame(yhat_test).describe()
-roc_auc_score(df_test["target"].values, yhat_test[:, 1])
+if TARGET_TYPE == "CLASS":
+    print(roc_auc_score(df_test["target"].values, yhat_test[:, 1]))
+if TARGET_TYPE == "REGR":
+    print(spearman_loss_func(df_test["target"].values, yhat_test))
 
 # Plot performance
-plot_all_performances(df_test["target"], yhat_test, pdf=plotloc + "performance.pdf")
+plot_all_performances(df_test["target"], yhat_test, target_type=TARGET_TYPE, ylim=None,
+                      pdf=plotloc + TARGET_TYPE + "_performance.pdf")
 
 
 # --- Check performance for crossvalidated fits ---------------------------------------------------------------------

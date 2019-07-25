@@ -9,7 +9,7 @@ from initialize import *
 # Specific libraries
 from sklearn.model_selection import GridSearchCV, cross_validate, ShuffleSplit, learning_curve
 from sklearn.metrics import make_scorer
-from sklearn.ensemble import RandomForestClassifier  # , GradientBoostingClassifier
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor  # , GradientBoostingClassifier
 from sklearn.linear_model import ElasticNet
 import xgboost as xgb
 import lightgbm as lgbm
@@ -24,7 +24,7 @@ if TARGET_TYPE == "REGR":
     metric = make_scorer(spearman_loss_func, greater_is_better=True)
 
 # Load results from exploration
-with open(TARGET_TYPE + "1_explore.pkl", "rb") as file:
+with open(TARGET_TYPE + "_1_explore.pkl", "rb") as file:
     d_vars = pickle.load(file)
 df, metr, cate, features, features_binned, features_lgbm = \
     d_vars["df"], d_vars["metr"], d_vars["cate"], d_vars["features"], d_vars["features_binned"], d_vars["features_lgbm"]
@@ -88,7 +88,7 @@ pd.DataFrame.from_dict(fit.cv_results_)\
 
 # Random Forest
 # noinspection PyTypeChecker
-fit = GridSearchCV(RandomForestClassifier(warm_start=True),
+fit = GridSearchCV(RandomForestRegressor(warm_start=True) if TARGET_TYPE == "REGR" else RandomForestClassifier(warm_start=True),
                    [{"n_estimators": [10, 20],
                      "max_features": [x for x in range(1, len(features), 5)]}],
                    cv=split_my1fold_cv.split(df_tune),
@@ -106,7 +106,7 @@ pd.DataFrame.from_dict(fit.cv_results_)\
 
 
 # XGBoost
-fit = GridSearchCV(xgb.Regressor() if TARGET_TYPE == "REGR" else xgb.Classifier(),
+fit = GridSearchCV(xgb.XGBRegressor() if TARGET_TYPE == "REGR" else xgb.XGBClassifier(),
                    [{"n_estimators": [x for x in range(100,3100,500)], "learning_rate": [0.01],
                      "max_depth": [3,6], "min_child_weight": [5,10]}],
                    cv=split_my1fold_cv.split(df_tune),

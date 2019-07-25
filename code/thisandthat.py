@@ -50,6 +50,10 @@ df_fitres[factors] = df_fitres[factors].astype("str")
   + facet_grid(". ~ param_max_depth"))
 
 
+def dummy():
+    print(TARGET_TYPE)
+dummy()
+
 # plotnine cannot plot several plots on one page
 i=1
 nbins = 20

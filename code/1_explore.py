@@ -11,7 +11,7 @@ from initialize import *
 from scipy.stats.mstats import winsorize
 
 # Main parameter
-TARGET_TYPE = "REGR"
+TARGET_TYPE = "CLASS"
 
 if TARGET_TYPE == "CLASS":
     ylim = None
