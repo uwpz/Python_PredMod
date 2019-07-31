@@ -12,7 +12,7 @@ from sklearn.base import clone
 import xgboost as xgb
 
 # Main parameter
-TARGET_TYPE = "REGR"
+TARGET_TYPE = "CLASS"
 
 # Specific parameters
 if TARGET_TYPE == "CLASS":

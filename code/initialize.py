@@ -123,8 +123,8 @@ def plot_distr(df, features, target="target", target_type="CLASS", color=["blue"
                         # Target barplot
                         # sns.barplot(df_tmp.h, df_tmp[cate[page * ppp + i]], orient="h", color="coral", ax=axact)
                         ax_act.barh(df_plot[feature_act], df_plot.h, height=df_plot.new_w,
-                                    color=color[1], edgecolor="black")
-                        ax_act.set_xlabel("Proportion Target = Y")
+                                    color=color[1], edgecolor="black", alpha=0.5, linewidth=2)
+                        ax_act.set_xlabel("mean(" + target + ")")
                     if target_type == "REGR":
                         # Target boxplot
                         df[[feature_act, target]].boxplot(target, feature_act, vert=False, widths=df_plot.w.values,
@@ -142,20 +142,25 @@ def plot_distr(df, features, target="target", target_type="CLASS", color=["blue"
                     ax_act.axvline(0, color="black")
                     if target_type == "CLASS":
                         ax_act.get_shared_y_axes().join(ax_act, inset_ax)
-                        inset_ax.barh(df_plot[feature_act], df_plot.w, color="grey")
+                        inset_ax.barh(df_plot[feature_act], df_plot.w, color="grey", edgecolor="black", alpha=0.5,
+                                      linewidth=2)
                     if target_type == "REGR":
                         df_plot.plot.barh(y="w", x=feature_act, color="grey", ax=inset_ax, legend=False)
 
                 # Metric feature
                 else:
                     if target_type == "CLASS":
-                        sns.distplot(df.loc[df[target] == 1, feature_act].dropna(), color=color[1], label="1", ax=ax_act)
-                        sns.distplot(df.loc[df[target] == 0, feature_act].dropna(), color=color[0], label="0", ax=ax_act)
+                        sns.distplot(df.loc[df[target] == 0, feature_act].dropna(), color=color[0],
+                                     bins = 20, label="0", ax=ax_act)
+                        sns.distplot(df.loc[df[target] == 1, feature_act].dropna(), color=color[1],
+                                     bins = 20, label="1", ax=ax_act)
                         # sns.FacetGrid(df, hue=target, palette=["red","blue"])\
                         #     .map(sns.distplot, metr[i])\
                         #     .add_legend() # does not work for multiple axes
                         if varimp is not None:
                             ax_act.set_title(feature_act + " (VI:" + str(varimp[feature_act]) + ")")
+                        else:
+                            ax_act.set_title(feature_act)
                         ax_act.set_ylabel("density")
                         ax_act.set_xlabel(feature_act + "(NA: " +
                                           str((df[feature_act].isnull().mean() * 100).round(1)) +
@@ -170,7 +175,7 @@ def plot_distr(df, features, target="target", target_type="CLASS", color=["blue"
                         i_bool = df[feature_act].notnull()
                         sns.boxplot(x=df.loc[i_bool, feature_act],
                                     y=df.loc[i_bool, target].astype("category"),
-                                    #order=df[feature_act].value_counts().index.values[::-1],
+                                    showmeans = True,
                                     palette=color,
                                     ax=inset_ax)
                         ax_act.legend(title=target, loc="best")
@@ -190,6 +195,8 @@ def plot_distr(df, features, target="target", target_type="CLASS", color=["blue"
                         sns.regplot(feature_act, target, df, lowess=True, scatter=False, color="black", ax=ax_act)
                         if varimp is not None:
                             ax_act.set_title(feature_act + " (VI:" + str(varimp[feature_act]) + ")")
+                        else:
+                            ax_act.set_title(feature_act)
                         ax_act.set_ylabel("target")
                         ax_act.set_xlabel(feature_act + "(NA: " +
                                           str(df[feature_act].isnull().mean().round(3) * 100) +
@@ -254,9 +261,17 @@ def plot_corr(df, features, cutoff=0, n_cluster=5, w=8, h=6, pdf=None):
                 chi2 = chi2_contingency(tmp)[0]
                 df_corr.iloc[i, j] = np.sqrt(chi2 / (n + chi2)) * np.sqrt(m / (m-1))
                 df_corr.iloc[j, i] = df_corr.iloc[i, j]
+        d_new_names = dict(zip(df_corr.columns.values,
+                             df_corr.columns.values + " (" + \
+                             df[df_corr.columns.values].nunique().astype("str").values + ")"))
+        df_corr.rename(columns=d_new_names, index=d_new_names, inplace=True)
 
     if len(metr):
         df_corr = abs(df[metr].corr(method="spearman"))
+        d_new_names = dict(zip(df_corr.columns.values,
+                             df_corr.columns.values + "(NA: " + \
+                             (df[df_corr.columns.values].isnull().mean() * 100).round(1).astype("str").values + "%)"))
+        df_corr.rename(columns=d_new_names, index=d_new_names, inplace=True)
 
     # Cut off
     np.fill_diagonal(df_corr.values, 0)
@@ -289,6 +304,7 @@ def plot_corr(df, features, cutoff=0, n_cluster=5, w=8, h=6, pdf=None):
 # Univariate variable importance
 def calc_imp(df, features, target="target", target_type="CLASS"):
     # df=df; features=metr; target="target"; target_type="CLASS"
+    #pdb.set_trace()
     varimp = pd.Series()
     for feature_act in features:
         # feature_act=metr[8]
@@ -300,14 +316,19 @@ def calc_imp(df, features, target="target", target_type="CLASS"):
                                                           .transform("mean").values)
                                             .round(3))}
             else:
-                varimp_act = {feature_act: (roc_auc_score(y_true=df[target].values,
-                                                          y_score=df[[target]]
-                                                          .assign(dummy=pd.qcut(df[feature_act], 10, duplicates="drop")
-                                                                  .astype("object")
-                                                                  .fillna("(Missing)"))
-                                                          .groupby("dummy")[target]
-                                                          .transform("mean").values)
-                                            .round(3))}
+                try:
+                    varimp_act = {feature_act: (roc_auc_score(y_true=df[target].values,
+                                                              y_score=df[[target]]
+                                                              .assign(dummy=pd.qcut(df[feature_act], 10,
+                                                                                    duplicates="drop")
+                                                                      .astype("object")
+                                                                      .fillna("(Missing)"))
+                                                              .groupby("dummy")[target]
+                                                              .transform("mean").values)
+                                                .round(3))}
+                except:
+                    varimp_act = {feature_act: 0.5}
+
         if target_type == "REGR":
             if df[feature_act].dtype == "object":
                 df_tmp = df[[feature_act, target]]\
@@ -575,7 +596,7 @@ class TrainTestSep:
             if self.sample_type == "cv":
                 i_train_yield = np.concatenate(splits_train)
                 if self.n_splits > 1:
-                    i_train_yield = np.setdiff1d(i_train_yield, splits_train[i])
+                    i_train_yield = np.setdiff1d(i_train_yield, splits_train[i], assume_unique=True)
                 i_test_yield = splits_test[i]
             elif self.sample_type == "bootstrap":
                 np.random.seed(self.random_state * (i+1))
