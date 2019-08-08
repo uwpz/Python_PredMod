@@ -244,6 +244,12 @@ plot_distr(df.query("fold != 'namethisutil'"), cate, varimp=varimp_cate, target_
            color=color, ylim=ylim,
            nrow=2, ncol=3, w=18, h=12, pdf=plotloc + TARGET_TYPE + "_distr_cate.pdf")
 
+fig, ax_act = plt.subplots(1,1)
+b = df[["Kitchen_Qual", "target"]].boxplot("target", "Kitchen_Qual", vert=False,
+                                  showmeans=True,
+                                  #boxprops=dict(color='black'),
+                                  patch_artist=True,
+                                  ax=ax_act)
 
 # --- Removing variables ---------------------------------------------------------------------------------------------
 # Remove leakage variables

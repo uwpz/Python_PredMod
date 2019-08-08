@@ -15,7 +15,7 @@ import xgboost as xgb
 import lightgbm as lgbm
 
 # Main parameter
-TARGET_TYPE = "REGR"
+TARGET_TYPE = "CLASS"
 
 # Specific parameters
 if TARGET_TYPE == "CLASS":

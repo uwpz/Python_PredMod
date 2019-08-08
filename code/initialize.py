@@ -54,7 +54,7 @@ twocol = ["red", "green"]
 
 
 # ######################################################################################################################
-# My Functions
+# My Functions and Classes
 # ######################################################################################################################
 
 # def setdiff(a, b):
@@ -63,6 +63,8 @@ twocol = ["red", "green"]
 
 # def union(a, b):
 #     return a + [x for x in b if x not in set(a)]
+
+# --- Functions ----------------------------------------------------------------------------------------
 
 def spearman_loss_func(y_true, y_pred):
     spear = pd.DataFrame({"y_true": y_true, "y_pred": y_pred}).corr(method="spearman").values[0, 1]
@@ -91,6 +93,8 @@ def plot_distr(df, features, target="target", target_type="CLASS", color=["blue"
     # df = df; features = cate; target = "target"; target_type="REGR";  varimp=None;
     # ylim = [0, 250e3]
     # ncol=2; nrow=2; pdf=None; w=8; h=6
+
+    #pdb.set_trace()
 
     # Help variables
     n_ppp = ncol * nrow  # plots per page
@@ -128,6 +132,8 @@ def plot_distr(df, features, target="target", target_type="CLASS", color=["blue"
                     if target_type == "REGR":
                         # Target boxplot
                         df[[feature_act, target]].boxplot(target, feature_act, vert=False, widths=df_plot.w.values,
+                                                          showmeans=True,
+                                                          patch_artist=True,
                                                           ax=ax_act)
                         fig.suptitle("")
                     if varimp is not None:
@@ -151,9 +157,9 @@ def plot_distr(df, features, target="target", target_type="CLASS", color=["blue"
                 else:
                     if target_type == "CLASS":
                         sns.distplot(df.loc[df[target] == 0, feature_act].dropna(), color=color[0],
-                                     bins = 20, label="0", ax=ax_act)
+                                     bins=20, label="0", ax=ax_act)
                         sns.distplot(df.loc[df[target] == 1, feature_act].dropna(), color=color[1],
-                                     bins = 20, label="1", ax=ax_act)
+                                     bins=20, label="1", ax=ax_act)
                         # sns.FacetGrid(df, hue=target, palette=["red","blue"])\
                         #     .map(sns.distplot, metr[i])\
                         #     .add_legend() # does not work for multiple axes
@@ -175,7 +181,7 @@ def plot_distr(df, features, target="target", target_type="CLASS", color=["blue"
                         i_bool = df[feature_act].notnull()
                         sns.boxplot(x=df.loc[i_bool, feature_act],
                                     y=df.loc[i_bool, target].astype("category"),
-                                    showmeans = True,
+                                    showmeans=True,
                                     palette=color,
                                     ax=inset_ax)
                         ax_act.legend(title=target, loc="best")
@@ -212,7 +218,7 @@ def plot_distr(df, features, target="target", target_type="CLASS", color=["blue"
                         inset_ax.set_axis_off()
                         ax_act.get_shared_x_axes().join(ax_act, inset_ax)
                         i_bool = df[feature_act].notnull()
-                        sns.distplot(df[feature_act].dropna(), color="grey", ax=inset_ax)
+                        sns.distplot(df[feature_act].dropna(), bins = 20, color="grey", ax=inset_ax)
 
                         # Inner-inner Boxplot
                         ylim_inner = inset_ax.get_ylim()
@@ -552,70 +558,11 @@ def plot_all_performances(y, yhat, target_type="CLASS", ylim=None, w=18, h=12, p
     plt.show()
 
 
-'''
-# Special Kfold splitter: training fold only from training data, test fold only from test data
-class KFoldTraintestSep:
-    def __init__(self, n_splits=3, random_state=None):
-        self.n_splits = n_splits
-        self.random_state = random_state
-
-    def split(self, X, y, folds=None):
-        for i_train, i_test in KFold(n_splits=self.n_splits,
-                                     shuffle=True,
-                                     random_state=self.random_state).split(X, y):
-            i_train_train = i_train[folds[i_train] == "train"]
-            i_test_test = i_test[folds[i_test] == "test"]
-            yield i_train_train, i_test_test
-
-    def get_n_splits(self):
-        return self.n_splits
-'''
-
-
-# Special splitter: training fold only from training data, test fold only from test data
-class TrainTestSep:
-    def __init__(self, n_splits=1, sample_type="cv", fold_var="fold", random_state=42):
-        self.n_splits = n_splits
-        self.sample_type = sample_type
-        self.fold_var = fold_var
-        self.random_state = random_state
-
-    def split(self, df):
-        i_df = np.arange(len(df))
-        np.random.seed(self.random_state)
-        np.random.shuffle(i_df)
-        i_train = i_df[df[self.fold_var].values[i_df] == "train"]
-        i_test = i_df[df[self.fold_var].values[i_df] == "test"]
-        if self.sample_type == "cv":
-            splits_train = np.array_split(i_train, self.n_splits)
-            splits_test = np.array_split(i_test, self.n_splits)
-        else:
-            splits_train = None
-            splits_test = None
-        for i in range(self.n_splits):
-            if self.sample_type == "cv":
-                i_train_yield = np.concatenate(splits_train)
-                if self.n_splits > 1:
-                    i_train_yield = np.setdiff1d(i_train_yield, splits_train[i], assume_unique=True)
-                i_test_yield = splits_test[i]
-            elif self.sample_type == "bootstrap":
-                np.random.seed(self.random_state * (i+1))
-                i_train_yield = np.random.choice(i_train, len(i_train))
-                np.random.seed(self.random_state * (i+1))
-                i_test_yield = np.random.choice(i_test, len(i_test))
-            else:
-                i_train_yield = None
-                i_test_yield = None
-            yield i_train_yield, i_test_yield
-
-    def get_n_splits(self):
-        return self.n_splits
-    
-    
 # Variable importance
 def calc_varimp_by_permutation(df, df_ref, fit,
                                target, metr, cate,
-                               b_sample, b_all,
+                               target_type="CLASS",
+                               b_sample=None, b_all=None,
                                features=None,
                                n_jobs=8):
     # df=df_train;  df_ref=df; target = "target"
@@ -624,20 +571,28 @@ def calc_varimp_by_permutation(df, df_ref, fit,
         features = all_features
 
     # Original performance
-    perf_orig = roc_auc_score(df[target],
-                              scale_predictions(fit.predict_proba(CreateSparseMatrix(metr, cate, df_ref).
-                                                                  fit_transform(df)),
-                                                b_sample, b_all)[:, 1])
+    if target_type == "CLASS":
+        perf_orig = roc_auc_score(df[target],
+                                  scale_predictions(fit.predict_proba(CreateSparseMatrix(metr, cate, df_ref).
+                                                                      fit_transform(df)),
+                                                    b_sample, b_all)[:, 1])
+    if target_type == "REGR":
+        perf_orig = spearman_loss_func(df[target],
+                                       fit.predict(CreateSparseMatrix(metr, cate, df_ref).fit_transform(df)))
 
     # Performance per variable after permutation
     i_perm = np.random.permutation(np.arange(len(df)))  # permutation vector
 
     def run_in_parallel(df_perm, i_perm, feature, metr, cate, df_ref):
         df_perm[feature] = df_perm[feature].values[i_perm]
-        perf = roc_auc_score(df_perm[target],
-                             scale_predictions(
-                                 fit.predict_proba(CreateSparseMatrix(metr, cate, df_ref).fit_transform(df_perm)),
-                                 b_sample, b_all)[:, 1])
+        if target_type == "CLASS":
+            perf = roc_auc_score(df_perm[target],
+                                 scale_predictions(
+                                     fit.predict_proba(CreateSparseMatrix(metr, cate, df_ref).fit_transform(df_perm)),
+                                     b_sample, b_all)[:, 1])
+        if target_type == "REGR":
+            perf = spearman_loss_func(df_perm[target],
+                                      fit.predict(CreateSparseMatrix(metr, cate, df_ref).fit_transform(df_perm)))
         return perf
     perf = Parallel(n_jobs=n_jobs)(delayed(run_in_parallel)(df, i_perm, feature, metr, cate, df_ref)
                                    for feature in features)
@@ -691,6 +646,67 @@ def calc_partial_dependence(df, df_ref, fit,
         .assign(importance_sumnormed=lambda x: 100 * x["perf_diff"] / sum(x["perf_diff"]))
 
     return df_varimp
+
+
+# --- Classes ----------------------------------------------------------------------------------------
+
+'''
+# Special Kfold splitter: training fold only from training data, test fold only from test data
+class KFoldTraintestSep:
+    def __init__(self, n_splits=3, random_state=None):
+        self.n_splits = n_splits
+        self.random_state = random_state
+
+    def split(self, X, y, folds=None):
+        for i_train, i_test in KFold(n_splits=self.n_splits,
+                                     shuffle=True,
+                                     random_state=self.random_state).split(X, y):
+            i_train_train = i_train[folds[i_train] == "train"]
+            i_test_test = i_test[folds[i_test] == "test"]
+            yield i_train_train, i_test_test
+
+    def get_n_splits(self):
+        return self.n_splits
+'''
+
+# Special splitter: training fold only from training data, test fold only from test data
+class TrainTestSep:
+    def __init__(self, n_splits=1, sample_type="cv", fold_var="fold", random_state=42):
+        self.n_splits = n_splits
+        self.sample_type = sample_type
+        self.fold_var = fold_var
+        self.random_state = random_state
+
+    def split(self, df):
+        i_df = np.arange(len(df))
+        np.random.seed(self.random_state)
+        np.random.shuffle(i_df)
+        i_train = i_df[df[self.fold_var].values[i_df] == "train"]
+        i_test = i_df[df[self.fold_var].values[i_df] == "test"]
+        if self.sample_type == "cv":
+            splits_train = np.array_split(i_train, self.n_splits)
+            splits_test = np.array_split(i_test, self.n_splits)
+        else:
+            splits_train = None
+            splits_test = None
+        for i in range(self.n_splits):
+            if self.sample_type == "cv":
+                i_train_yield = np.concatenate(splits_train)
+                if self.n_splits > 1:
+                    i_train_yield = np.setdiff1d(i_train_yield, splits_train[i], assume_unique=True)
+                i_test_yield = splits_test[i]
+            elif self.sample_type == "bootstrap":
+                np.random.seed(self.random_state * (i + 1))
+                i_train_yield = np.random.choice(i_train, len(i_train))
+                np.random.seed(self.random_state * (i + 1))
+                i_test_yield = np.random.choice(i_test, len(i_test))
+            else:
+                i_train_yield = None
+                i_test_yield = None
+            yield i_train_yield, i_test_yield
+
+    def get_n_splits(self):
+        return self.n_splits
 
 
 # Map Nonexisting members of a string column to modus
@@ -857,16 +873,16 @@ class CreateSparseMatrix(BaseEstimator, TransformerMixin):
     def fit(self, df=None, y=None):
         if self.df_ref is None:
             self.df_ref = df
-        if self.cate is not None:
+        if self.cate is not None and len(self.cate) > 0:
             self._d_categories = [self.df_ref[x].unique() for x in self.cate]
         return self
 
     def transform(self, df=None, y=None):
-        if self.metr is not None:
+        if self.metr is not None and len(self.metr) > 0:
             m_metr = df[self.metr].to_sparse().to_coo()
         else:
             m_metr = None
-        if self.cate is not None:
+        if self.cate is not None and len(self.cate) > 0:
             enc = OneHotEncoder(categories=self._d_categories)
             if len(self.cate) == 1:
                 m_cate = enc.fit_transform(df[self.cate].reshape(-1, 1), y)
