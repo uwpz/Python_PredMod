@@ -11,7 +11,7 @@ from initialize import *
 from scipy.stats.mstats import winsorize
 
 # Main parameter
-TARGET_TYPE = "REGR"
+TARGET_TYPE = "CLASS"
 
 # Specific parameters
 if TARGET_TYPE == "CLASS":
@@ -161,7 +161,7 @@ print(varimp_metr)
 varimp_metr_binned = calc_imp(df.query("fold != 'util'"), metr_binned, target_type=TARGET_TYPE)
 print(varimp_metr_binned)
 
-# Plot 
+# Plot
 plot_distr(df.query("fold != 'util'"), metr, varimp=varimp_metr, target_type=TARGET_TYPE, color=twocol, ylim=ylim,
            ncol=3, nrow=2, w=12, h=8, pdf=plotloc + TARGET_TYPE + "_distr_metr_final.pdf")
 
@@ -244,17 +244,12 @@ plot_distr(df.query("fold != 'namethisutil'"), cate, varimp=varimp_cate, target_
            color=color, ylim=ylim,
            nrow=2, ncol=3, w=18, h=12, pdf=plotloc + TARGET_TYPE + "_distr_cate.pdf")
 
-fig, ax_act = plt.subplots(1,1)
-b = df[["Kitchen_Qual", "target"]].boxplot("target", "Kitchen_Qual", vert=False,
-                                  showmeans=True,
-                                  #boxprops=dict(color='black'),
-                                  patch_artist=True,
-                                  ax=ax_act)
 
 # --- Removing variables ---------------------------------------------------------------------------------------------
 # Remove leakage variables
-cate = np.setdiff1d(cate, ["xxx"], assume_unique=True)
-toomany = np.setdiff1d(toomany, ["xxx"], assume_unique=True)
+if TARGET_TYPE == "CLASS":
+    cate = np.setdiff1d(cate, ["boat"], assume_unique=True)
+    toomany = np.setdiff1d(toomany, ["boat"], assume_unique=True)
 
 # Remove highly/perfectly (>=99%) correlated (the ones with less levels!)
 plot_corr(df, cate, cutoff=cutoff_corr, n_cluster=5, pdf=plotloc + TARGET_TYPE + "_corr_cate.pdf")

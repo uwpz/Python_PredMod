@@ -151,7 +151,8 @@ def plot_distr(df, features, target="target", target_type="CLASS", color=["blue"
                         inset_ax.barh(df_plot[feature_act], df_plot.w, color="grey", edgecolor="black", alpha=0.5,
                                       linewidth=2)
                     if target_type == "REGR":
-                        df_plot.plot.barh(y="w", x=feature_act, color="grey", ax=inset_ax, legend=False)
+                        df_plot.plot.barh(y="w", x=feature_act, color="grey", ax=inset_ax, edgecolor="black", alpha=0.5,
+                                      linewidth=2, legend=False)
 
                 # Metric feature
                 else:
