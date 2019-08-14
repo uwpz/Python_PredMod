@@ -11,7 +11,7 @@ from initialize import *
 from scipy.stats.mstats import winsorize
 
 # Main parameter
-TARGET_TYPE = "CLASS"
+TARGET_TYPE = "REGR"
 
 # Specific parameters
 if TARGET_TYPE == "CLASS":
@@ -118,7 +118,7 @@ df[metr].describe()
 
 # --- Create nominal variables for all metric variables (for linear models) before imputing -------------------------
 metr_binned = metr + "_BINNED_"
-df[metr_binned] = df[metr].apply(lambda x: pd.qcut(x, 10, duplicates="drop").astype("str"))
+df[metr_binned] = df[metr].apply(lambda x: char_bins(x))
 
 # Convert missings to own level ("(Missing)")
 df[metr_binned] = df[metr_binned].replace("nan", np.nan).fillna("(Missing)")
@@ -126,7 +126,6 @@ print(create_values_df(df[metr_binned], 11))
 
 # Remove binned variables with just 1 bin
 onebin = metr_binned[df[metr_binned].nunique() == 1]
-metr_binned = np.setdiff1d(metr_binned, onebin, assume_unique=True)
 
 
 # --- Missings + Outliers + Skewness ---------------------------------------------------------------------------------
@@ -140,10 +139,11 @@ metr_binned = np.setdiff1d(metr_binned, remove + "_BINNED_", assume_unique=True)
 
 # Check for outliers and skewness
 plot_distr(df.query("fold != 'util'"), metr, target_type=TARGET_TYPE, color=color, ylim=ylim,
-           ncol=3, nrow=2, w=12, h=8, pdf=plotloc + TARGET_TYPE + "_distr_metr.pdf")
+           ncol=4, nrow=2, w=18, h=12, pdf=plotloc + TARGET_TYPE + "_distr_metr.pdf")
 
 # Winsorize
-df[metr] = df[metr].apply(lambda x: winsorize(x, (0.01, 0.01)))  # hint: plot again before deciding for log-trafo
+df[metr] = df[metr].apply(lambda x: x.clip(x.quantile(0.02),
+                                           x.quantile(0.98)))  # hint: plot again before deciding for log-trafo
 
 # Log-Transform
 if TARGET_TYPE == "CLASS":
@@ -162,8 +162,9 @@ varimp_metr_binned = calc_imp(df.query("fold != 'util'"), metr_binned, target_ty
 print(varimp_metr_binned)
 
 # Plot
-plot_distr(df.query("fold != 'util'"), metr, varimp=varimp_metr, target_type=TARGET_TYPE, color=twocol, ylim=ylim,
-           ncol=3, nrow=2, w=12, h=8, pdf=plotloc + TARGET_TYPE + "_distr_metr_final.pdf")
+plot_distr(df.query("fold != 'util'"), features=np.hstack(zip(metr, metr_binned)),
+           varimp=pd.concat([varimp_metr, varimp_metr_binned]), target_type=TARGET_TYPE, color=color, ylim=ylim,
+           ncol=4, nrow=2, w=18, h=12, pdf=plotloc + TARGET_TYPE + "_distr_metr_final.pdf")
 
 
 # --- Removing variables -------------------------------------------------------------------------------------------
@@ -272,7 +273,8 @@ plot_distr(df.query("fold != 'namethisutil'"), cate_toprint, "fold_num", varimp=
 
 # --- Define final features ----------------------------------------------------------------------------------------
 features = np.concatenate([metr, cate, toomany + "_ENCODED"])
-features_binned = np.concatenate([metr_binned, np.setdiff1d(cate, "MISS_" + miss, assume_unique=True),
+features_binned = np.concatenate([np.setdiff1d(metr_binned, onebin, assume_unique=True),
+                                  np.setdiff1d(cate, "MISS_" + miss, assume_unique=True),
                                   toomany + "_ENCODED"])  # do not need indicators for binned
 features_lgbm = np.append(metr, cate + "_ENCODED")
 
