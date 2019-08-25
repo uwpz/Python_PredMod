@@ -97,7 +97,7 @@ def show_figure(fig):
 # Plot distribution regarding target
 def plot_distr(df, features, target="target", target_type="CLASS", color=["blue", "red"], varimp=None, ylim=None,
                nrow=1, ncol=1, w=8, h=6, pdf=None):
-    # df = df; features = cate; target = "target"; target_type="REGR";  varimp=None;
+    # df = df; features = metr; target = "target"; target_type="REGR";  varimp=None;
     # ylim = [0, 250e3]
     # ncol=2; nrow=2; pdf=None; w=8; h=6
 
@@ -116,7 +116,7 @@ def plot_distr(df, features, target="target", target_type="CLASS", color=["blue"
         # page = 0
         fig, ax = plt.subplots(nrow, ncol)
         for i in range(n_ppp):
-            # i = 0
+            # i = 1
             ax_act = ax.flat[i]
             if page * n_ppp + i <= max(range(len(features))):
                 feature_act = features[page * n_ppp + i]
@@ -124,20 +124,23 @@ def plot_distr(df, features, target="target", target_type="CLASS", color=["blue"
                 # Categorical feature
                 if df[feature_act].dtype == "object":
                     # Prepare data
+                   # pdb.set_trace()
                     df_plot = pd.DataFrame({"h": df.groupby(feature_act)[target].mean(),
                                             "w": df.groupby(feature_act).size()}).reset_index()
+                    df_plot["pct"] = 100 * df_plot["w"] / len(df)
                     df_plot["w"] = 0.9 * df_plot["w"] / max(df_plot["w"])
                     df_plot[feature_act + "_new"] = df_plot[feature_act] + " (" + \
-                                                    (df_plot["w"]*100).round(1).astype(str) + "%)"
+                                                    (df_plot["pct"]).round(1).astype(str) + "%)"
                     df_plot["new_w"] = np.where(df_plot["w"].values < 0.2, 0.2, df_plot["w"])
                     if target_type == "CLASS":
                         # Target barplot
                         # sns.barplot(df_tmp.h, df_tmp[cate[page * ppp + i]], orient="h", color="coral", ax=axact)
                         ax_act.barh(df_plot[feature_act], df_plot.h, height=df_plot.new_w,
-                                    color=color[1], edgecolor="black", alpha=0.5, linewidth=2)
+                                    color=color[1], edgecolor="black", alpha=0.5, linewidth=1)
                         ax_act.set_xlabel("mean(" + target + ")")
                     if target_type == "REGR":
-                        #pdb.set_trace()
+                        if ylim is not None:
+                            ax_act.set_xlim(ylim)
 
                         # Target boxplot
                         bp = df[[feature_act, target]].boxplot(target, feature_act, vert=False,
@@ -150,6 +153,7 @@ def plot_distr(df, features, target="target", target_type="CLASS", color=["blue"
                                                                         ax=ax_act)
                         [[item.set_color('black') for item in bp["target"][key]] for key in bp["target"].keys()]
                         fig.suptitle("")
+                        ax_act.set_xlabel(target)
                     ax_act.set_yticklabels(df_plot[feature_act + "_new"].values)
                     if varimp is not None:
                         ax_act.set_title(feature_act + " (VI:" + str(varimp[feature_act]) + ")")
@@ -216,7 +220,7 @@ def plot_distr(df, features, target="target", target_type="CLASS", color=["blue"
                                                                             [(1, 1, 1, 0), "blue", "yellow", "red"])
                         ax_act.set_facecolor('0.98')
                         p = ax_act.hexbin(df[feature_act], df[target],
-                                          gridsize=(int(100 * tmp_scale), 100),
+                                          gridsize=(int(50 * tmp_scale), 50),
                                           cmap=tmp_cmap)
                         plt.colorbar(p, ax=ax_act)
                         sns.regplot(feature_act, target, df, lowess=True, scatter=False, color="black", ax=ax_act)
@@ -233,23 +237,27 @@ def plot_distr(df, features, target="target", target_type="CLASS", color=["blue"
                         ax_act.axhline(color="grey")
 
                         # Inner Histogram
-                        ax_act.set_ylim(ylim[0] - 0.3 * (ylim[1] - ylim[0]))
-                        inset_ax = ax_act.inset_axes([0, 0, 1, 0.25])
-                        #inset_ax.set_axis_off()
+                        ax_act.set_ylim(ylim[0] - 0.4 * (ylim[1] - ylim[0]))
+                        inset_ax = ax_act.inset_axes([0, 0.05, 1, 0.15])
+                        inset_ax.set_axis_off()
                         inset_ax.get_yaxis().set_visible(False)
                         ax_act.get_shared_x_axes().join(ax_act, inset_ax)
                         i_bool = df[feature_act].notnull()
                         sns.distplot(df[feature_act].dropna(), bins=20, color="black", ax=inset_ax)
+                        inset_ax.set_xlabel("")
 
                         # Inner-inner Boxplot
-                        ylim_inner = inset_ax.get_ylim()
-                        inset_ax.set_ylim(ylim_inner[0] - 0.35 * (ylim_inner[1] - ylim_inner[0]))
-                        inset_inset_ax = inset_ax.inset_axes([0, 0, 1, 0.2])
-                        inset_inset_ax.set_axis_off()
-                        inset_ax.get_shared_x_axes().join(inset_ax, inset_inset_ax)
-                        sns.boxplot(x=df.loc[i_bool, feature_act], palette=["grey"], ax=inset_inset_ax)
-
-                # plt.show()
+                        #ylim_inner = inset_ax.get_ylim()
+                        #inset_ax.set_ylim(ylim_inner[0] - 0.35 * (ylim_inner[1] - ylim_inner[0]))
+                        inset_ax = ax_act.inset_axes([0, 0, 1, 0.05])
+                        #inset_ax.set_axis_off()
+                        inset_ax.get_shared_x_axes().join(ax_act, inset_ax)
+                        sns.boxplot(x=df.loc[i_bool, feature_act], palette=["grey"], ax=inset_ax)
+                        #inset_ax.set_xlabel("")
+                        inset_ax.set_xlabel(feature_act + "(NA: " +
+                                          str(df[feature_act].isnull().mean().round(3) * 100) +
+                                          "%)")
+                        # plt.show()
             else:
                 ax_act.axis("off")  # Remove left-over plots
         # plt.subplots_adjust(wspace=1)
@@ -289,15 +297,15 @@ def plot_corr(df, features, cutoff=0, n_cluster=5, w=8, h=6, pdf=None):
                 df_corr.iloc[i, j] = np.sqrt(chi2 / (n + chi2)) * np.sqrt(m / (m-1))
                 df_corr.iloc[j, i] = df_corr.iloc[i, j]
         d_new_names = dict(zip(df_corr.columns.values,
-                             df_corr.columns.values + " (" + \
-                             df[df_corr.columns.values].nunique().astype("str").values + ")"))
+                               df_corr.columns.values + " (" +
+                               df[df_corr.columns.values].nunique().astype("str").values + ")"))
         df_corr.rename(columns=d_new_names, index=d_new_names, inplace=True)
 
     if len(metr):
         df_corr = abs(df[metr].corr(method="spearman"))
         d_new_names = dict(zip(df_corr.columns.values,
-                             df_corr.columns.values + "(NA: " + \
-                             (df[df_corr.columns.values].isnull().mean() * 100).round(1).astype("str").values + "%)"))
+                               df_corr.columns.values + " (NA: " +
+                               (df[df_corr.columns.values].isnull().mean() * 100).round(1).astype("str").values + "%)"))
         df_corr.rename(columns=d_new_names, index=d_new_names, inplace=True)
 
     # Cut off
@@ -384,7 +392,7 @@ def calc_imp(df, features, target="target", target_type="CLASS"):
 # Rescale predictions (e.g. to rewind undersampling)
 def scale_predictions(yhat, b_sample=None, b_all=None):
     if b_sample is None:
-        yhat_rescaled = yhat
+        yhat_rescaled = yhatgg
     else:
         tmp = yhat * np.array([1 - b_all, b_all]) / np.array([1 - b_sample, b_sample])
         yhat_rescaled = (tmp.T / tmp.sum(axis=1)).T

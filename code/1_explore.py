@@ -113,6 +113,9 @@ df["encode_flag"] = np.random.binomial(1, 0.2, len(df))
 # --- Define metric covariates -------------------------------------------------------------------------------------
 metr = df_meta_sub.loc[df_meta_sub.type == "metr", "variable"].values
 df = Convert(features=metr, convert_to="float").fit_transform(df)
+if TARGET_TYPE == "REGR":
+    # Zeros are missings in AmesHousing
+    df[metr] = df[metr].replace(0, np.nan)
 df[metr].describe()
 
 
@@ -138,6 +141,7 @@ metr = np.setdiff1d(metr, remove, assume_unique=True)  # adapt metadata
 metr_binned = np.setdiff1d(metr_binned, remove + "_BINNED_", assume_unique=True)  # keep "binned" version in sync
 
 # Check for outliers and skewness
+df[metr].describe()
 plot_distr(df.query("fold != 'util'"), metr, target_type=TARGET_TYPE, color=color, ylim=ylim,
            ncol=4, nrow=2, w=18, h=12, pdf=plotloc + TARGET_TYPE + "_distr_metr.pdf")
 
@@ -150,7 +154,7 @@ if TARGET_TYPE == "CLASS":
     tolog = np.array(["fare"], dtype="object")
 if TARGET_TYPE == "REGR":
     tolog = np.array(["Lot_Area"], dtype="object")
-df[tolog + "_LOG_"] = df[tolog].apply(lambda x: np.log(x - max(0, np.min(x)) + 1))
+df[tolog + "_LOG_"] = df[tolog].apply(lambda x: np.log(x - min(0, np.min(x)) + 1))
 np.place(metr, np.isin(metr, tolog), tolog + "_LOG_")  # adapt metadata (keep order)
 
 
@@ -162,7 +166,7 @@ varimp_metr_binned = calc_imp(df.query("fold != 'util'"), metr_binned, target_ty
 print(varimp_metr_binned)
 
 # Plot
-plot_distr(df.query("fold != 'util'"), features=np.hstack(zip(metr, metr_binned)),
+plot_distr(df.query("fold != 'util'"), features=np.hstack(zip(metr, metr_binned[0:1])),
            varimp=pd.concat([varimp_metr, varimp_metr_binned]), target_type=TARGET_TYPE, color=color, ylim=ylim,
            ncol=4, nrow=2, w=18, h=12, pdf=plotloc + TARGET_TYPE + "_distr_metr_final.pdf")
 
@@ -253,7 +257,8 @@ if TARGET_TYPE == "CLASS":
     toomany = np.setdiff1d(toomany, ["boat"], assume_unique=True)
 
 # Remove highly/perfectly (>=99%) correlated (the ones with less levels!)
-plot_corr(df, cate, cutoff=cutoff_corr, n_cluster=5, pdf=plotloc + TARGET_TYPE + "_corr_cate.pdf")
+plot_corr(df, np.setdiff1d(cate, ["MISS_" + miss]), cutoff=cutoff_corr, n_cluster=5,
+          pdf=plotloc + TARGET_TYPE + "_corr_cate.pdf")
 
 
 # --- Time/fold depedency --------------------------------------------------------------------------------------------
