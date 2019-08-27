@@ -12,7 +12,7 @@ from sklearn.base import clone
 import xgboost as xgb
 
 # Main parameter
-TARGET_TYPE = "CLASS"
+TARGET_TYPE = "REGR"
 
 # Specific parameters
 if TARGET_TYPE == "CLASS":
@@ -159,7 +159,7 @@ plot_all_performances(df_test["target"], yhat_top, target_type=TARGET_TYPE,
 
 # ---- Check residuals --------------------------------------------------------------------------------------------
 
-## Residuals
+# Residuals
 if TARGET_TYPE == "CLASS":
     df_test["yhat"] = yhat_test[:, 1]
 
@@ -170,13 +170,14 @@ df_test["residual"] = df_test["target"] - df_test["yhat"]
 df_test["abs_residual"] = df_test["residual"].abs()
 df_test["residual"].describe()
 
+
 # For non-regr tasks one might want to plot it for each target level (df_test.query("target == 0/1"))
 plot_distr(df_test, features, target="residual", target_type="REGR", ylim=ylim_res,
            ncol=3, nrow=2, w=18, h=12, pdf=plotloc + TARGET_TYPE + "_diagnosis_residual.pdf")
 plt.close(fig="all")
 
 
-## Absolute residuals
+# Absolute residuals
 if TARGET_TYPE in ["CLASS", "REGR"]:
     plot_distr(df_test, features, target="abs_residual", target_type="REGR", ylim=(0,ylim_res[1]),
                ncol=3, nrow=2, w=18, h=12, pdf=plotloc + TARGET_TYPE + "_diagnosis_absolute_residual.pdf")
@@ -237,7 +238,19 @@ sns.barplot("importance_sumnormed", "feature", hue="fold",
 # Partial Dependance
 # ######################################################################################################################
 
-# TODOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+df_pd = calc_partial_dependence(df_test, df_traintest, fit, "target", metr, cate, target_type=TARGET_TYPE,
+                                b_sample=b_sample, b_all=b_all,
+                                features=topn_features)
+
+# Crossvalidate Depedence
+df_pd_cv = pd.DataFrame()
+for i, (i_train, i_test) in enumerate(split_my5fold.split(df_traintest)):
+    df_tmp = calc_partial_dependence(df_traintest.iloc[i_train, :], df_traintest, d_cv["estimator"][i],
+                                     "target", metr, cate, TARGET_TYPE,
+                                     b_sample, b_all,
+                                     features=topn_features)
+    df_tmp["run"] = i
+    df_pd_cv = df_pd_cv.append(df_tmp)
 
 
 # ######################################################################################################################

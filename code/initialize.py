@@ -97,9 +97,8 @@ def show_figure(fig):
 # Plot distribution regarding target
 def plot_distr(df, features, target="target", target_type="CLASS", color=["blue", "red"], varimp=None, ylim=None,
                nrow=1, ncol=1, w=8, h=6, pdf=None):
-    # df = df; features = metr; target = "target"; target_type="REGR";  varimp=None;
-    # ylim = [0, 250e3]
-    # ncol=2; nrow=2; pdf=None; w=8; h=6
+    # df = df_test; features = cate; target = "residual"; target_type="REGR"; color=["blue", "red"]; varimp=None;
+    # ylim = ylim_res; ncol=2; nrow=2; pdf=None; w=8; h=6
 
     # Help variables
     n_ppp = ncol * nrow  # plots per page
@@ -151,7 +150,7 @@ def plot_distr(df, features, target="target", target_type="CLASS", color=["blue"
                                                                         flierprops=dict(marker="."),
                                                                         return_type='dict',
                                                                         ax=ax_act)
-                        [[item.set_color('black') for item in bp["target"][key]] for key in bp["target"].keys()]
+                        [[item.set_color('black') for item in bp[target][key]] for key in bp[target].keys()]
                         fig.suptitle("")
                         ax_act.set_xlabel(target)
                     ax_act.set_yticklabels(df_plot[feature_act + "_new"].values)
@@ -228,7 +227,7 @@ def plot_distr(df, features, target="target", target_type="CLASS", color=["blue"
                             ax_act.set_title(feature_act + " (VI:" + str(varimp[feature_act]) + ")")
                         else:
                             ax_act.set_title(feature_act)
-                        ax_act.set_ylabel("target")
+                        ax_act.set_ylabel(target)
                         ax_act.set_xlabel(feature_act + "(NA: " +
                                           str(df[feature_act].isnull().mean().round(3) * 100) +
                                           "%)")
@@ -392,7 +391,7 @@ def calc_imp(df, features, target="target", target_type="CLASS"):
 # Rescale predictions (e.g. to rewind undersampling)
 def scale_predictions(yhat, b_sample=None, b_all=None):
     if b_sample is None:
-        yhat_rescaled = yhatgg
+        yhat_rescaled = yhat
     else:
         tmp = yhat * np.array([1 - b_all, b_all]) / np.array([1 - b_sample, b_sample])
         yhat_rescaled = (tmp.T / tmp.sum(axis=1)).T
@@ -612,7 +611,8 @@ def calc_varimp_by_permutation(df, df_ref, fit,
     # Performance per variable after permutation
     i_perm = np.random.permutation(np.arange(len(df)))  # permutation vector
 
-    def run_in_parallel(df_perm, i_perm, feature, metr, cate, df_ref):
+    # TODO: add all variables used as parameter
+    def run_in_parallel(df_perm, feature):
         df_perm[feature] = df_perm[feature].values[i_perm]
         if target_type == "CLASS":
             perf = roc_auc_score(df_perm[target],
@@ -623,10 +623,10 @@ def calc_varimp_by_permutation(df, df_ref, fit,
             perf = spearman_loss_func(df_perm[target],
                                       fit.predict(CreateSparseMatrix(metr, cate, df_ref).fit_transform(df_perm)))
         return perf
-    perf = Parallel(n_jobs=n_jobs)(delayed(run_in_parallel)(df, i_perm, feature, metr, cate, df_ref)
+    perf = Parallel(n_jobs=n_jobs)(delayed(run_in_parallel)(df, feature)
                                    for feature in features)
 
-    # Collect performances and calcualte importance
+    # Collect performances and calculate importance
     df_varimp = pd.DataFrame({"feature": features, "perf_diff": np.maximum(0, perf_orig - perf)})\
         .sort_values(["perf_diff"], ascending=False)\
         .assign(importance=lambda x: 100 * x["perf_diff"] / max(x["perf_diff"]))\
@@ -636,45 +636,50 @@ def calc_varimp_by_permutation(df, df_ref, fit,
     return df_varimp
 
 
-# Variable importance
+# Partial dependence
 def calc_partial_dependence(df, df_ref, fit,
                             target, metr, cate,
-                            b_sample, b_all,
+                            target_type="CLASS",
+                            b_sample=None, b_all=None,
                             features=None,
+                            quantiles=np.arange(0, 1.1, 0.1),
                             n_jobs=8):
-    # df=df_train;  df_ref=df; target = "target"
+    # df=df_test;  df_ref=df_traintest; target = "target"; target_type=TARGET_TYPE; features=None;
+    # quantiles = np.arange(0, 1.1, 0.1);n_jobs=4
     all_features = np.append(metr, cate)
     if features is None:
         features = all_features
 
-    # Original performance
-    perf_orig = roc_auc_score(df[target],
-                              scale_predictions(fit.predict_proba(CreateSparseMatrix(metr, cate, df_ref).
-                                                                  fit_transform(df)),
-                                                b_sample, b_all)[:, 1])
+    df_pd = pd.DataFrame()
 
-    # Performance per variable after permutation
-    i_perm = np.random.permutation(np.arange(len(df)))  # permutation vector
+    def run_in_parallel(feature):
+        # feature = features[3]
+        if feature in metr:
+            values = df_ref[feature].quantile(quantiles)
+        else:
+            values = np.sort(df_ref[feature].unique())
 
-    def run_in_parallel(df_perm, i_perm, feature, metr, cate, df_ref):
-        df_perm[feature] = df_perm[feature].values[i_perm]
-        perf = roc_auc_score(df_perm[target],
-                             scale_predictions(
-                                 fit.predict_proba(CreateSparseMatrix(metr, cate, df_ref).fit_transform(df_perm)),
-                                 b_sample, b_all)[:, 1])
-        return perf
+        df_tmp = df.copy()  # save original data
 
-    perf = Parallel(n_jobs=n_jobs)(delayed(run_in_parallel)(df, i_perm, feature, metr, cate, df_ref)
-                                   for feature in features)
+        df_pd_feature = pd.DataFrame()
+        for value in values:
+            #value=values[0]
+            df_tmp[feature] = value
+            if target_type == "CLASS":
+                yhat_mean = np.mean(scale_predictions(fit.predict_proba(CreateSparseMatrix(metr, cate, df_ref).
+                                                                        fit_transform(df_tmp)),
+                                    b_sample, b_all)[:, 1])
+            if target_type == "REGR":
+                yhat_mean = np.mean(fit.predict(CreateSparseMatrix(metr, cate, df_ref).fit_transform(df_tmp)),
+                                    b_sample, b_all)
 
-    # Collect performances and calcualte importance
-    df_varimp = pd.DataFrame({"feature": features, "perf_diff": np.maximum(0, perf_orig - perf)}) \
-        .sort_values(["perf_diff"], ascending=False) \
-        .assign(importance=lambda x: 100 * x["perf_diff"] / max(x["perf_diff"])) \
-        .assign(importance_cum=lambda x: 100 * x["perf_diff"].cumsum() / sum(x["perf_diff"])) \
-        .assign(importance_sumnormed=lambda x: 100 * x["perf_diff"] / sum(x["perf_diff"]))
-
-    return df_varimp
+            df_pd_feature = pd.concat([df_pd_feature,
+                                       pd.DataFrame({"feature": feature, "value": str(value), "yhat_mean": yhat_mean},
+                                                    index=[0])])
+        return df_pd_feature
+    df_pd = pd.concat(Parallel(n_jobs=n_jobs)(delayed(run_in_parallel)(feature)
+                                              for feature in features))
+    return df_pd
 
 
 # --- Classes ----------------------------------------------------------------------------------------
