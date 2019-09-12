@@ -11,7 +11,7 @@ from initialize import *
 from scipy.stats.mstats import winsorize
 
 # Main parameter
-TARGET_TYPE = "REGR"
+TARGET_TYPE = "MULTICLASS"
 
 # Specific parameters
 if TARGET_TYPE == "CLASS":
@@ -19,6 +19,11 @@ if TARGET_TYPE == "CLASS":
     cutoff_corr = 0.1
     cutoff_varimp = 0.52
     color = twocol
+if TARGET_TYPE == "MULTICLASS":
+    ylim = None
+    cutoff_corr = 0.1
+    cutoff_varimp = 0.52
+    color = threecol
 if TARGET_TYPE == "REGR":
     ylim = (0, 250e3)
     cutoff_corr = 0.8
@@ -34,7 +39,7 @@ if TARGET_TYPE == "REGR":
 # noinspection PyUnresolvedReferences
 if TARGET_TYPE == "CLASS":
     df_orig = pd.read_csv(dataloc + "titanic.csv")
-if TARGET_TYPE == "REGR":
+if TARGET_TYPE in ["REGR", "MULTICLASS"]:
     df_orig = pd.read_csv(dataloc + "AmesHousing.txt", delimiter="\t")
     df_orig.columns = df_orig.columns.str.replace(" ","_")
 df_orig.describe()
@@ -46,7 +51,7 @@ df_values = create_values_df(df_orig, 10)
 print(df_values)
 if TARGET_TYPE == "CLASS":
     df_orig["survived"].value_counts() / df_orig.shape[0]
-if TARGET_TYPE == "REGR":
+if TARGET_TYPE =="REGR":
     fig, ax = plt.subplots(1, 2)
     df_orig["SalePrice"].plot.hist(bins=20, ax = ax[0])
     np.log(df_orig["SalePrice"]).plot.hist(bins=20, ax = ax[1]);
@@ -59,13 +64,12 @@ df = df_orig.copy()
 # --- Read metadata (Project specific) -----------------------------------------------------------------------------
 if TARGET_TYPE == "CLASS":
     df_meta = pd.read_excel(dataloc + "datamodel_titanic.xlsx", header=1)
-if TARGET_TYPE == "REGR":
+if TARGET_TYPE in ["REGR", "MULTICLASS"]:
     df_meta = pd.read_excel(dataloc + "datamodel_AmesHousing.xlsx", header=1)
 
 # Check
-print(np.setdiff1d(df.columns.values, df_meta["variable"].values, assume_unique=True))
-print(np.setdiff1d(df_meta.loc[df_meta["category"] == "orig", "variable"].values, df.columns.values,
-                   assume_unique=True))
+print(setdiff(df.columns.values, df_meta["variable"].values))
+print(setdiff(df_meta.loc[df_meta["category"] == "orig", "variable"].values, df.columns.values))
 
 # Filter on "ready"
 df_meta_sub = df_meta.loc[df_meta["status"].isin(["ready", "derive"])]
@@ -77,11 +81,11 @@ if TARGET_TYPE == "CLASS":
     df["familysize"] = df["sibsp"] + df["parch"] + 1
     df["fare_pp"] = df["fare"] / df.groupby("ticket")["fare"].transform("count")
     df[["deck", "familysize", "fare_pp"]].describe(include="all")
-if TARGET_TYPE == "REGR":
+if TARGET_TYPE in ["REGR", "MULTICLASS"]:
     pass # number of rooms, sqm_per_room, ...
 
 # Check
-print(np.setdiff1d(df_meta["variable"].values, df.columns.values, assume_unique=True))
+print(setdiff(df_meta["variable"].values, df.columns.values))
 
 
 # --- Define target and train/test-fold ----------------------------------------------------------------------------
@@ -90,20 +94,19 @@ if TARGET_TYPE == "CLASS":
     df["target"] = df["survived"]
 if TARGET_TYPE == "REGR":
     df["target"] = df["SalePrice"]
+if TARGET_TYPE == "MULTICLASS":
+    df["target"] = "Cat_" + pd.qcut(df["SalePrice"], [0, 0.3, 0.95, 1]).astype("str")
 df["target"].describe()
 
 # Train/Test fold: usually split by time
 np.random.seed(123)
-# noinspection PyTypeChecker
 df["fold"] = np.random.permutation(pd.qcut(np.arange(len(df)), q=[0, 0.1, 0.8, 1], labels=["util", "train", "test"]))
 print(df.fold.value_counts())
-df["fold_num"] = df["fold"].map({"train": 0, "util": 0, "test": 1})
+df["fold_num"] = df["fold"].map({"train": 0, "util": 0, "test": 1})  # Used for pedicting test data
+df["encode_flag"] = df["fold"].map({"train": 0, "test": 0, "util": 1})  # Used for encoding
 
 # Define the id
 df["id"] = np.arange(len(df)) + 1
-
-# Define data to be used for target encoding
-df["encode_flag"] = np.random.binomial(1, 0.2, len(df))
 
 
 # ######################################################################################################################
@@ -111,24 +114,23 @@ df["encode_flag"] = np.random.binomial(1, 0.2, len(df))
 # ######################################################################################################################
 
 # --- Define metric covariates -------------------------------------------------------------------------------------
-metr = df_meta_sub.loc[df_meta_sub.type == "metr", "variable"].values
+metr = df_meta_sub.loc[df_meta_sub["type"] == "metr", "variable"].values
 df = Convert(features=metr, convert_to="float").fit_transform(df)
-if TARGET_TYPE == "REGR":
+if TARGET_TYPE in ["REGR", "MULTICLASS"]:
     # Zeros are missings in AmesHousing
     df[metr] = df[metr].replace(0, np.nan)
 df[metr].describe()
 
 
 # --- Create nominal variables for all metric variables (for linear models) before imputing -------------------------
-metr_binned = metr + "_BINNED_"
-df[metr_binned] = df[metr].apply(lambda x: char_bins(x))
+df[metr + "_BINNED_"] = df[metr].apply(lambda x: char_bins(x))
 
 # Convert missings to own level ("(Missing)")
-df[metr_binned] = df[metr_binned].replace("nan", np.nan).fillna("(Missing)")
-print(create_values_df(df[metr_binned], 11))
+df[metr + "_BINNED_"] = df[metr + "_BINNED_"].replace("nan", np.nan).fillna("(Missing)")
+print(create_values_df(df[metr + "_BINNED_"], 11))
 
-# Remove binned variables with just 1 bin
-onebin = metr_binned[df[metr_binned].nunique() == 1]
+# Get binned variables with just 1 bin (removed later)
+onebin = (metr + "_BINNED_")[df[metr + "_BINNED_"].nunique() == 1]
 
 
 # --- Missings + Outliers + Skewness ---------------------------------------------------------------------------------
@@ -137,13 +139,13 @@ misspct = df[metr].isnull().mean().round(3)  # missing percentage
 misspct.sort_values(ascending=False)  # view in descending order
 remove = misspct[misspct > 0.95].index.values  # vars to remove
 print(remove)
-metr = np.setdiff1d(metr, remove, assume_unique=True)  # adapt metadata
-metr_binned = np.setdiff1d(metr_binned, remove + "_BINNED_", assume_unique=True)  # keep "binned" version in sync
+metr = setdiff(metr, remove)  # adapt metadata
 
 # Check for outliers and skewness
 df[metr].describe()
-plot_distr(df.query("fold != 'util'"), metr, target_type=TARGET_TYPE, color=color, ylim=ylim,
-           ncol=4, nrow=2, w=18, h=12, pdf=plotloc + TARGET_TYPE + "_distr_metr.pdf")
+if TARGET_TYPE in ["CLASS","REGR"]:
+    plot_distr(df.query("fold != 'util'"), metr, target_type=TARGET_TYPE, color=color, ylim=ylim,
+               ncol=4, nrow=2, w=18, h=12, pdf=plotloc + TARGET_TYPE + "_distr_metr.pdf")
 
 # Winsorize
 df[metr] = df[metr].apply(lambda x: x.clip(x.quantile(0.02),
@@ -152,37 +154,39 @@ df[metr] = df[metr].apply(lambda x: x.clip(x.quantile(0.02),
 # Log-Transform
 if TARGET_TYPE == "CLASS":
     tolog = np.array(["fare"], dtype="object")
-if TARGET_TYPE == "REGR":
+if TARGET_TYPE in ["REGR", "MULTICLASS"]:
     tolog = np.array(["Lot_Area"], dtype="object")
 df[tolog + "_LOG_"] = df[tolog].apply(lambda x: np.log(x - min(0, np.min(x)) + 1))
-np.place(metr, np.isin(metr, tolog), tolog + "_LOG_")  # adapt metadata (keep order)
+metr = np.where(np.isin(metr, tolog), metr + "_LOG_", metr)  # adapt metadata (keep order)
+df.rename(columns=dict(zip(tolog + "_BINNED_", tolog + "_BINNED_" + "_LOG_")), inplace=True)  # adapt binned version
 
 
 # --- Final variable information ------------------------------------------------------------------------------------
 # Univariate variable importance
-varimp_metr = calc_imp(df.query("fold != 'util'"), metr, target_type=TARGET_TYPE)
-print(varimp_metr)
-varimp_metr_binned = calc_imp(df.query("fold != 'util'"), metr_binned, target_type=TARGET_TYPE)
-print(varimp_metr_binned)
+if TARGET_TYPE in ["REGR", "CLASS"]:
+    varimp_metr = calc_imp(df.query("fold != 'util'"), metr, target_type=TARGET_TYPE)
+    print(varimp_metr)
+    varimp_metr_binned = calc_imp(df.query("fold != 'util'"), metr_binned, target_type=TARGET_TYPE)
+    print(varimp_metr_binned)
 
 # Plot
-plot_distr(df.query("fold != 'util'"), features=np.hstack(zip(metr, metr_binned[0:1])),
-           varimp=pd.concat([varimp_metr, varimp_metr_binned]), target_type=TARGET_TYPE, color=color, ylim=ylim,
-           ncol=4, nrow=2, w=18, h=12, pdf=plotloc + TARGET_TYPE + "_distr_metr_final.pdf")
+if TARGET_TYPE in ["REGR", "CLASS"]:
+    plot_distr(df.query("fold != 'util'"), features=np.hstack(zip(metr, metr_binned[0:1])),
+               varimp=pd.concat([varimp_metr, varimp_metr_binned]), target_type=TARGET_TYPE, color=color, ylim=ylim,
+               ncol=4, nrow=2, w=18, h=12, pdf=plotloc + TARGET_TYPE + "_distr_metr_final.pdf")
+
 
 
 # --- Removing variables -------------------------------------------------------------------------------------------
 # Remove leakage features
-remove = np.array(["xxx", "xxx"], dtype="object")
-metr = np.setdiff1d(metr, remove, assume_unique=True)
-metr_binned = np.setdiff1d(metr_binned, remove + "_BINNED", assume_unique=True)  # keep "binned" version in sync
+remove = ["xxx", "xxx"]
+metr = setdiff(metr, remove)
 
 # Remove highly/perfectly (>=98%) correlated (the ones with less NA!)
 df[metr].describe()
 plot_corr(df, metr, cutoff=cutoff_corr, pdf=plotloc + TARGET_TYPE + "_corr_metr.pdf")
-remove = np.array(["xxx", "xxx"], dtype="object")
-metr = np.setdiff1d(metr, remove, assume_unique=True)
-metr_binned = np.setdiff1d(metr_binned, remove + "_BINNED", assume_unique=True)  # keep "binned" version in sync
+remove = ["xxx", "xxx"]
+metr = setdiff(metr, remove)
 
 
 # --- Time/fold depedency --------------------------------------------------------------------------------------------
@@ -193,7 +197,8 @@ varimp_metr_fold = calc_imp(df.query("fold != 'namethisutil'"), metr, "fold_num"
 
 # Plot: only variables with with highest importance
 metr_toprint = varimp_metr_fold[varimp_metr_fold > cutoff_varimp].index.values
-plot_distr(df.query("fold != 'namethisutil'"), metr_toprint, "fold_num", varimp=varimp_metr_fold, target_type="CLASS",
+plot_distr(df.query("fold != 'namethisutil'"), metr_toprint, "fold_num", varimp=varimp_metr_fold,
+           target_type="CLASS",
            ncol=2, nrow=2, w=12, h=8, pdf=plotloc + TARGET_TYPE + "_distr_metr_folddep.pdf")
 
 
@@ -227,27 +232,34 @@ df[cate] = df[cate].fillna("(Missing)")
 df[cate].describe()
 
 # Get "too many members" columns and copy these for additional encoded features (for tree based models)
-topn_toomany = 10
-levinfo = df[cate].apply(lambda x: x.unique().size).sort_values(ascending=False)  # number of levels
-print(levinfo)
-toomany = levinfo[levinfo > topn_toomany].index.values
-print(toomany)
-toomany = np.setdiff1d(toomany, ["xxx", "xxx"], assume_unique=True)  # set exception for important variables
+if TARGET_TYPE in ["REGR", "CLASS"]:
+    topn_toomany = 10
+    levinfo = df[cate].apply(lambda x: x.unique().size).sort_values(ascending=False)  # number of levels
+    print(levinfo)
+    toomany = levinfo[levinfo > topn_toomany].index.values
+    print(toomany)
+    toomany = setdiff(toomany, ["xxx", "xxx"])  # set exception for important variables
+else:
+    toomany = np.array([], dtype="object")
 
 # Create encoded features (for tree based models), i.e. numeric representation
-df = TargetEncoding(features=cate, encode_flag_column="encode_flag", target="target").fit_transform(df)
+if TARGET_TYPE in ["REGR", "CLASS"]:
+    df = TargetEncoding(features=cate, encode_flag_column="encode_flag", target="target").fit_transform(df)
 
 # Convert toomany features: lump levels and map missings to own level
-df = MapToomany(features=toomany, n_top=10).fit_transform(df)
+if TARGET_TYPE in ["REGR", "CLASS"]:
+    df = MapToomany(features=toomany, n_top=10).fit_transform(df)
 
 # Univariate variable importance
-varimp_cate = calc_imp(df.query("fold != 'namethisutil'"), cate, target_type=TARGET_TYPE)
-print(varimp_cate)
+if TARGET_TYPE in ["REGR", "CLASS"]:
+    varimp_cate = calc_imp(df.query("fold != 'namethisutil'"), cate, target_type=TARGET_TYPE)
+    print(varimp_cate)
 
 # Check
-plot_distr(df.query("fold != 'namethisutil'"), cate, varimp=varimp_cate, target_type=TARGET_TYPE,
-           color=color, ylim=ylim,
-           nrow=2, ncol=3, w=18, h=12, pdf=plotloc + TARGET_TYPE + "_distr_cate.pdf")
+if TARGET_TYPE in ["REGR", "CLASS"]:
+    plot_distr(df.query("fold != 'namethisutil'"), cate, varimp=varimp_cate, target_type=TARGET_TYPE,
+               color=color, ylim=ylim,
+               nrow=2, ncol=3, w=18, h=12, pdf=plotloc + TARGET_TYPE + "_distr_cate.pdf")
 
 
 # --- Removing variables ---------------------------------------------------------------------------------------------
@@ -278,15 +290,15 @@ plot_distr(df.query("fold != 'namethisutil'"), cate_toprint, "fold_num", varimp=
 
 # --- Define final features ----------------------------------------------------------------------------------------
 features = np.concatenate([metr, cate, toomany + "_ENCODED"])
-features_binned = np.concatenate([np.setdiff1d(metr_binned, onebin, assume_unique=True),
-                                  np.setdiff1d(cate, "MISS_" + miss, assume_unique=True),
+features_binned = np.concatenate([setdiff(metr + "_BINNED_", onebin),
+                                  setdiff(cate, "MISS_" + miss),
                                   toomany + "_ENCODED"])  # do not need indicators for binned
 features_lgbm = np.append(metr, cate + "_ENCODED")
 
 # Check
-np.setdiff1d(features, df.columns.values.tolist(), assume_unique=True)
-np.setdiff1d(features_binned, df.columns.values.tolist(), assume_unique=True)
-np.setdiff1d(features_lgbm, df.columns.values.tolist(), assume_unique=True)
+setdiff(features, df.columns.values.tolist())
+setdiff(features_binned, df.columns.values.tolist())
+setdiff(features_lgbm, df.columns.values.tolist())
 
 
 # --- Remove burned data ----------------------------------------------------------------------------------------

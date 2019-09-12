@@ -1,35 +1,27 @@
 
-from collections import defaultdict
 
 
-dd = defaultdict(None, {"1st": "erster"})
-dd.values()
-dd = dd.setdefault(1)
-
-tmp = df.pclass.map(dd)
-
-tmp
-
-import numpy as np
-import matplotlib.pyplot as plt
-
-np.random.seed(0)
-n = 100000
-x = np.random.standard_normal(n)
-y = 2.0 + 3.0 * x + 4.0 * np.random.standard_normal(n)
-xmin = x.min()
-xmax = x.max()
-ymin = y.min()
-ymax = y.max()
-
-fig, axs = plt.subplots(ncols=2, sharey=True, figsize=(7, 4))
-fig.subplots_adjust(hspace=0.5, left=0.07, right=0.93)
-ax = axs[0]
-hb = ax.hexbin(x, y, gridsize=50, cmap='inferno')
+# General libraries, parameters and functions
+from initialize import *
+# import sys; sys.path.append(getcwd() + "\\code") #not needed if code is marked as "source" in pycharm
 
 
-import matplotlib.pyplot as plt
-x = range(5)
-y = [20, 35, 30, 35, 27]
-plt.barh(x,y,0.35)
-plt.show()
+# Load from dump
+with open("data/info_20000_1024_einheit.pkl", "rb") as file:
+    pick = pickle.load(file)
+yhat = pick["yhat"]
+labels = pick["labels"]
+df_y = pick["df_y"]
+
+# Get yhat and y related information
+y_files = df_y["y_files"].values
+y_true = df_y["y_true"].values
+y_pred = df_y["y_pred"].values
+y_true_label = df_y["y_true_label"].values
+y_pred_label = df_y["y_pred_label"].values
+yhat_true = df_y["yhat_true"].values
+yhat_pred = df_y["yhat_pred"].values
+
+
+plot_all_performances(y=y_true, yhat=yhat, labels=labels, target_type="MULTICLASS", colors=colors, ylim=None,
+                      w=18, h=12, pdf="blub.pdf")

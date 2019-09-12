@@ -11,6 +11,8 @@ import pandas as pd
 import matplotlib.colors as colors
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
+from matplotlib import colors as mcolors
+from matplotlib.colors import ListedColormap
 import seaborn as sns
 
 # ETL
@@ -51,23 +53,24 @@ pd.set_option('display.max_columns', 20)
 
 # Other
 twocol = ["red", "green"]
+threecol = ["green", "yellow", "red"]
+colors = pd.Series(dict(mcolors.BASE_COLORS, **mcolors.CSS4_COLORS))
+colors = colors.iloc[np.setdiff1d(np.arange(len(colors)),[7,8,9,12,13,14,16,17,26])]
+#sel = np.arange(50);  plt.bar(sel.astype("str"), 1, color=colors[sel])
 
 
 # ######################################################################################################################
 # My Functions and Classes
 # ######################################################################################################################
 
-# def setdiff(a, b):
-#     return [x for x in a if x not in set(b)]
-
-
-# def union(a, b):
-#     return a + [x for x in b if x not in set(a)]
-
 # --- Functions ----------------------------------------------------------------------------------------
+
+def setdiff(a, b):
+    return np.setdiff1d(a, b, True)
+
+
 def char_bins(series, n_bins=10):
     bins = pd.qcut(series, n_bins, duplicates="drop")
-    bins.cat.categories
     bins.cat.categories = ["q" + str(i).zfill(2)  # + ":" + bins.cat.categories.astype("str")[i-1]
                            for i in 1 + np.arange(len(bins.cat.categories))]
     return bins.astype("str")
@@ -399,11 +402,12 @@ def scale_predictions(yhat, b_sample=None, b_all=None):
 
 
 # Plot ML-algorithm performance
-def plot_all_performances(y, yhat, target_type="CLASS", ylim=None, w=18, h=12, pdf=None):
+def plot_all_performances(y, yhat, labels=None, target_type="CLASS", colors=None, ylim=None, w=18, h=12, pdf=None):
     # y=df_test["target"]; yhat=yhat_test; ylim = None; w=12; h=8
-    fig, ax = plt.subplots(2, 3)
 
     if target_type == "CLASS":
+        fig, ax = plt.subplots(2, 3)
+
         # Roc curve
         ax_act = ax[0, 0]
         fpr, tpr, cutoff = roc_curve(y, yhat[:, 1])
@@ -472,6 +476,8 @@ def plot_all_performances(y, yhat, target_type="CLASS", ylim=None, w=18, h=12, p
             ax_act.annotate("{0: .1f}".format(thres), (pct_tested[i_thres], prec[i_thres]), fontsize=10)
 
     if target_type == "REGR":
+        fig, ax = plt.subplots(2, 3)
+
         def plot_scatter(x, y, xlabel="x", ylabel="y", title=None, ylim=None, ax_act=None):
             if ylim is not None:
                 ax_act.set_ylim(ylim)
@@ -576,6 +582,89 @@ def plot_all_performances(y, yhat, target_type="CLASS", ylim=None, w=18, h=12, p
                     palette=["blue", "red"],
                     ax=inset_ax)
         ax_act.legend(title="", loc="best")
+
+    if target_type == "MULTICLASS":
+        fig, ax = plt.subplots(2, 2)
+
+        # AUC
+        k = yhat.shape[1]
+        ax_act = ax[0, 0]
+        aucs = np.array([roc_auc_score(np.where(y == i, 1, 0), yhat[:, i]).round(2) for i in np.arange(k)])
+
+        for i in np.arange(k):
+            #  i=3
+            y_bin = np.where(y == i, 1, 0)
+            fpr, tpr, cutoff = roc_curve(y_bin, yhat[:, i])
+            new_label = labels[i] + " (" + str(aucs[i]) + ")"
+            ax_act.plot(fpr, tpr, color=colors[i], label=new_label)
+        mean_auc = np.average(aucs).round(3)
+        weighted_auc = np.average(aucs, weights=np.array(np.unique(y, return_counts=True))[1, :]).round(3)
+        props = dict(xlabel=r"fpr: P($\^y$=1|$y$=0)",
+                     ylabel=r"tpr: P($\^y$=1|$y$=1)",
+                     title="ROC\n" + r"($AUC_{mean}$ = " + str(mean_auc) + r", $AUC_{weighted}$ = " +
+                           str(weighted_auc) + ")")
+        ax_act.set(**props)
+        ax_act.legend(title=r"Target ($AUC_{1-vs-all}$)", loc='best')
+
+        # Confusion Matrix
+        ax_act = ax[1, 0]
+
+        y_pred = yhat.argmax(axis=1)
+        freq_true = np.unique(y_true, return_counts=True)[1]
+        freqpct_true = np.round(np.divide(freq_true, len(y_true)) * 100, 1)
+        freq_pred = np.unique(y_pred, return_counts=True)[1]
+        freqpct_pred = np.round(np.divide(freq_pred, len(y_true)) * 100, 1)
+
+        m_conf = confusion_matrix(y, y_pred)
+        prec = np.round(np.diag(m_conf) / m_conf.sum(axis=1) * 100, 1)
+        rec = np.round(np.diag(m_conf) / m_conf.sum(axis=0) * 100, 1)
+        f1 = np.round(2 * prec * rec / (prec + rec), 1)
+
+        ylabels = [labels[i] + " (" + str(freq_true[i]) + ": " + str(freqpct_true[i]) + "%)" for i in
+                   np.arange(len(labels))]
+        xlabels = [labels[i] + " (" + str(freq_pred[i]) + ": " + str(freqpct_pred[i]) + "%)" for i in
+                   np.arange(len(labels))]
+        df_conf = pd.DataFrame(m_conf, columns=labels, index=labels).rename_axis(index="True label",
+                                                                                 columns="Predicted label")
+        acc = accuracy_score(y, y_pred)
+        sns.heatmap(df_conf, annot=True, fmt=".5g", cmap="Blues", ax=ax_act, xticklabels=True, yticklabels=True)
+        ax_act.set_yticklabels(labels=ylabels, rotation=0)
+        ax_act.set_xticklabels(labels=xlabels, rotation=90, ha="center")
+        props = dict(ylabel="True label (#: %)",
+                     xlabel="Predicted label (#: %)",
+                     title="Confusion Matrix (Acc ={0: .2f})".format(acc))
+        ax_act.set(**props)
+        for text in ax_act.texts[::len(labels) + 1]:
+            text.set_weight('bold')
+
+        # Metrics
+        ax_act = ax[0, 1]
+        df_metrics = pd.DataFrame(np.column_stack((y, np.flip(np.argsort(yhat, axis=1), axis=1)[:, :3])),
+                                  columns=["y", "yhat1", "yhat2", "yhat3"]). \
+            assign(acc_top1=lambda x: (x["y"] == x["yhat1"]).astype("int"),
+                   acc_top2=lambda x: ((x["y"] == x["yhat1"]) | (x["y"] == x["yhat2"])).astype("int"),
+                   acc_top3=lambda x: ((x["y"] == x["yhat1"]) | (x["y"] == x["yhat2"]) |
+                                       (x["y"] == x["yhat3"])).astype("int")). \
+            assign(label=lambda x: np.array(labels, dtype="object")[x["y"].values]). \
+            groupby(["label"])["acc_top1", "acc_top2", "acc_top3"].agg("mean").round(2). \
+            join(pd.DataFrame(np.stack((aucs, rec, prec, f1), axis=1),
+                              index=labels, columns=["auc", "recall", "precision", "f1"]))
+
+        sns.heatmap(df_metrics, annot=True, fmt=".5g",
+                    cmap=ListedColormap(['white']), linewidths=2, linecolor="black", cbar=False,
+                    ax=ax_act, xticklabels=True, yticklabels=True)
+        ax_act.set_xticklabels(labels=['Accuracy\n Top1', 'Accuracy\n Top2', 'Accuracy\n Top3', "AUC\n 1-vs-all",
+                                       'Recall\n' r"P($\^y$=k|$y$=k))", 'Precision\n' r"P($y$=k|$\^y$=k))", 'F1'])
+        ax_act.xaxis.tick_top()  # x axis on top
+        ax_act.xaxis.set_label_position('top')
+        ax_act.tick_params(left=False, top=False)
+        ax_act.set_ylabel("True label")
+
+        # Barplot
+        ax_act = ax[1, 1]
+        df_conf.iloc[::-1].plot.barh(stacked=True, ax=ax_act, color=colors[:len(labels)])
+        ax_act.legend(loc="center left", bbox_to_anchor=(1, 0.5))
+        ax_act.legend(loc='center left', title="Predicted label", bbox_to_anchor=(1, 0.5))
 
     # Adapt figure
     fig.set_size_inches(w=w, h=h)
