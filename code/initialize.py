@@ -8,7 +8,6 @@ import numpy as np
 import pandas as pd
 
 # Plot
-import matplotlib.colors as colors
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib import colors as mcolors
@@ -33,7 +32,7 @@ from collections import defaultdict
 from os import getcwd
 import pdb  # pdb.set_trace()  #quit with "q", next line with "n", continue with "c"
 from joblib import Parallel, delayed
-from dill import (load_session, dump_session)
+#from dill import (load_session, dump_session)
 import pickle
 
 
@@ -218,7 +217,7 @@ def plot_distr(df, features, target="target", target_type="CLASS", color=["blue"
                             tmp_scale = (ylim[1] - ylim[0]) / (np.max(df[target]) - np.min(df[target]))
                         else:
                             tmp_scale = 1
-                        tmp_cmap = colors.LinearSegmentedColormap.from_list("wh_bl_yl_rd",
+                        tmp_cmap = mcolors.LinearSegmentedColormap.from_list("wh_bl_yl_rd",
                                                                             [(1, 1, 1, 0), "blue", "yellow", "red"])
                         ax_act.set_facecolor('0.98')
                         p = ax_act.hexbin(df[feature_act], df[target],
@@ -484,7 +483,7 @@ def plot_all_performances(y, yhat, labels=None, target_type="CLASS", colors=None
                 tmp_scale = (ylim[1] - ylim[0]) / (np.max(y) - np.min(y))
             else:
                 tmp_scale = 1
-            tmp_cmap = colors.LinearSegmentedColormap.from_list("wh_bl_yl_rd",
+            tmp_cmap = mcolors.LinearSegmentedColormap.from_list("wh_bl_yl_rd",
                                                                 [(1, 1, 1, 0), "blue", "yellow", "red"])
             p = ax_act.hexbin(x, y,
                               gridsize=(int(50 * tmp_scale), 50),

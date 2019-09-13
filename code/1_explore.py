@@ -11,7 +11,7 @@ from initialize import *
 from scipy.stats.mstats import winsorize
 
 # Main parameter
-TARGET_TYPE = "MULTICLASS"
+TARGET_TYPE = "REGR"
 
 # Specific parameters
 if TARGET_TYPE == "CLASS":
@@ -158,7 +158,7 @@ if TARGET_TYPE in ["REGR", "MULTICLASS"]:
     tolog = np.array(["Lot_Area"], dtype="object")
 df[tolog + "_LOG_"] = df[tolog].apply(lambda x: np.log(x - min(0, np.min(x)) + 1))
 metr = np.where(np.isin(metr, tolog), metr + "_LOG_", metr)  # adapt metadata (keep order)
-df.rename(columns=dict(zip(tolog + "_BINNED_", tolog + "_BINNED_" + "_LOG_")), inplace=True)  # adapt binned version
+df.rename(columns=dict(zip(tolog + "_BINNED_", tolog + "_LOG_" + "_BINNED_")), inplace=True)  # adapt binned version
 
 
 # --- Final variable information ------------------------------------------------------------------------------------
@@ -166,12 +166,12 @@ df.rename(columns=dict(zip(tolog + "_BINNED_", tolog + "_BINNED_" + "_LOG_")), i
 if TARGET_TYPE in ["REGR", "CLASS"]:
     varimp_metr = calc_imp(df.query("fold != 'util'"), metr, target_type=TARGET_TYPE)
     print(varimp_metr)
-    varimp_metr_binned = calc_imp(df.query("fold != 'util'"), metr_binned, target_type=TARGET_TYPE)
+    varimp_metr_binned = calc_imp(df.query("fold != 'util'"), metr + "_BINNED_", target_type=TARGET_TYPE)
     print(varimp_metr_binned)
 
 # Plot
 if TARGET_TYPE in ["REGR", "CLASS"]:
-    plot_distr(df.query("fold != 'util'"), features=np.hstack(zip(metr, metr_binned[0:1])),
+    plot_distr(df.query("fold != 'util'"), features=np.hstack(zip(metr, metr + "_BINNED_")),
                varimp=pd.concat([varimp_metr, varimp_metr_binned]), target_type=TARGET_TYPE, color=color, ylim=ylim,
                ncol=4, nrow=2, w=18, h=12, pdf=plotloc + TARGET_TYPE + "_distr_metr_final.pdf")
 
