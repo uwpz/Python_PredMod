@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 # Plot
+import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib import colors as mcolors
@@ -15,25 +16,43 @@ from matplotlib.colors import ListedColormap
 import seaborn as sns
 
 # ETL
+import scipy as sp
 from scipy.stats import chi2_contingency
 from scipy.sparse import hstack
-from scipy.cluster.hierarchy import ward, dendrogram, fcluster
+from scipy.cluster.hierarchy import ward, fcluster
+from scipy.stats.mstats import winsorize
 
 # ML
 from sklearn.metrics import *
 from sklearn.preprocessing import *
 from sklearn.calibration import calibration_curve
-from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.base import BaseEstimator, TransformerMixin, ClassifierMixin, clone
 from sklearn.impute import SimpleImputer
-
+from sklearn.linear_model import ElasticNet, SGDClassifier, LogisticRegression
+from sklearn.neighbors.nearest_centroid import NearestCentroid
+from sklearn.tree import DecisionTreeRegressor, plot_tree #, export_graphviz
+import xgboost as xgb
+from sklearn.model_selection import (KFold, RepeatedKFold, StratifiedKFold, RepeatedStratifiedKFold,
+                                     GridSearchCV, cross_validate, ShuffleSplit, PredefinedSplit,
+                                     learning_curve, cross_val_predict)
+# from sklearn.externals.six import StringIO
+# from glmnet_python import glmnet, glmnetPredict
 
 # Util
 from collections import defaultdict
+import os
 from os import getcwd
 import pdb  # pdb.set_trace()  #quit with "q", next line with "n", continue with "c"
 from joblib import Parallel, delayed
 #from dill import (load_session, dump_session)
 import pickle
+#from IPython.display import Image
+#import pydotplus
+#import xlwt
+
+# Silent plotting
+#plt.ioff() #plt.ion()
+#matplotlib.use('Agg') #TkAgg
 
 
 # ######################################################################################################################
@@ -54,7 +73,7 @@ pd.set_option('display.max_columns', 20)
 twocol = ["red", "green"]
 threecol = ["green", "yellow", "red"]
 colors = pd.Series(dict(mcolors.BASE_COLORS, **mcolors.CSS4_COLORS))
-colors = colors.iloc[np.setdiff1d(np.arange(len(colors)),[7,8,9,12,13,14,16,17,26])]
+colors = colors.iloc[np.setdiff1d(np.arange(len(colors)),[6,7,8,9,12,13,14,15,16,17,26])]
 #sel = np.arange(50);  plt.bar(sel.astype("str"), 1, color=colors[sel])
 
 
@@ -78,6 +97,19 @@ def char_bins(series, n_bins=10):
 def spearman_loss_func(y_true, y_pred):
     spear = pd.DataFrame({"y_true": y_true, "y_pred": y_pred}).corr(method="spearman").values[0, 1]
     return spear
+
+
+def rmse(y_true, y_pred):
+    rmse = np.sqrt(np.mean(np.power(y_true - y_pred, 2)))
+    return rmse
+
+def auc(y_true, y_pred):
+    auc  = roc_auc_score(y_true, y_pred)
+    return auc
+
+def acc(y_true, y_pred):
+    acc = accuracy_score(y_true, np.where(y_pred > 0.5, 1, 0))
+    return acc
 
 
 # Overview of values 
@@ -118,7 +150,10 @@ def plot_distr(df, features, target="target", target_type="CLASS", color=["blue"
         fig, ax = plt.subplots(nrow, ncol)
         for i in range(n_ppp):
             # i = 1
-            ax_act = ax.flat[i]
+            if nrow*ncol == 1:
+                ax_act = ax
+            else:
+                ax_act = ax.flat[i]
             if page * n_ppp + i <= max(range(len(features))):
                 feature_act = features[page * n_ppp + i]
 
@@ -158,6 +193,8 @@ def plot_distr(df, features, target="target", target_type="CLASS", color=["blue"
                     ax_act.set_yticklabels(df_plot[feature_act + "_new"].values)
                     if varimp is not None:
                         ax_act.set_title(feature_act + " (VI:" + str(varimp[feature_act]) + ")")
+                    else:
+                        ax_act.set_title(feature_act)
                     ax_act.axvline(np.mean(df[target]), ls="dotted", color="black")
 
                     # Inner barplot
@@ -165,10 +202,11 @@ def plot_distr(df, features, target="target", target_type="CLASS", color=["blue"
                     ax_act.set_xlim(xlim[0] - 0.3 * (xlim[1] - xlim[0]))
                     inset_ax = ax_act.inset_axes([0, 0, 0.2, 1])
                     inset_ax.set_axis_off()
-                    ax_act.axvline(0, color="black")
+
                     if target_type == "CLASS":
+                        ax_act.axvline(0, color="black")
                         #inset_ax.set_yticklabels(df_plot[feature_act + "_new"].values)
-                        #ax_act.get_shared_y_axes().join(ax_act, inset_ax)
+                        ax_act.get_shared_y_axes().join(ax_act, inset_ax)
                         inset_ax.barh(df_plot[feature_act], df_plot.w,
                                       color="lightgrey", edgecolor="black", linewidth=1)
                     if target_type == "REGR":
@@ -275,7 +313,7 @@ def plot_distr(df, features, target="target", target_type="CLASS", color=["blue"
 
 # Plot correlation
 def plot_corr(df, features, cutoff=0, n_cluster=5, w=8, h=6, pdf=None):
-    # df = df; features = cate; cutoff = 0.1; w=8; h=6; pdf="blub.pdf"
+    # df = df; features = cate; cutoff = 0; n_cluster=3; w=8; h=6; pdf="blub.pdf"
 
     metr = features[df[features].dtypes != "object"]
     cate = features[df[features].dtypes == "object"]
@@ -295,7 +333,11 @@ def plot_corr(df, features, cutoff=0, n_cluster=5, w=8, h=6, pdf=None):
                 n = np.sum(tmp.values)
                 m = min(tmp.shape)
                 chi2 = chi2_contingency(tmp)[0]
-                df_corr.iloc[i, j] = np.sqrt(chi2 / (n + chi2)) * np.sqrt(m / (m-1))
+
+                try:
+                    df_corr.iloc[i, j] = np.sqrt(chi2 / (n + chi2)) * np.sqrt(m / (m-1))
+                except:
+                    df_corr.iloc[i, j] = None
                 df_corr.iloc[j, i] = df_corr.iloc[i, j]
         d_new_names = dict(zip(df_corr.columns.values,
                                df_corr.columns.values + " (" +
@@ -400,6 +442,87 @@ def scale_predictions(yhat, b_sample=None, b_all=None):
     return yhat_rescaled
 
 
+
+# Plot CV results
+def plot_cvresult(cv_results_, metric, x_var, color_var=None, column_var=None, row_var=None, style_var=None, pdf=None):
+    df_cvres = pd.DataFrame.from_dict(cv_results_)
+    df_cvres.columns = df_cvres.columns.str.replace("param_","")
+    plt = sns.FacetGrid(df_cvres, col=column_var, row=row_var, margin_titles=True) \
+        .map(sns.lineplot, x_var, "mean_test_" + metric,  # do not specify x= and y=!
+             hue="#" + df_cvres[color_var].astype('str') if color_var is not None else None,
+             style=df_cvres[style_var] if style_var is not None else None,
+             marker="o").add_legend()
+    if pdf is not None:
+        plt.savefig(pdf)
+
+
+# Plot generalization gap
+def plot_gengap(cv_results_, metric, x_var, color_var=None, column_var=None, row_var=None, pdf=None):
+
+    if pdf is not None:
+        pdf_pages = PdfPages(pdf)
+
+    # Prepare
+    df_cvres = pd.DataFrame.from_dict(cv_results_)
+    df_cvres.columns = df_cvres.columns.str.replace("param_","")
+    df_gengap = df_cvres\
+        .rename(columns={"mean_test_" + metric: "test",
+                         "mean_train_" + metric: "train"}) \
+        .assign(train_test_score_diff=lambda x: x.train - x.test) \
+        .reset_index()
+    df_hlp = pd.melt(df_gengap,
+                     id_vars=np.setdiff1d(df_gengap.columns.values, ["test", "train"]),
+                     value_vars=["test", "train"],
+                     var_name="fold", value_name="score")
+
+    # Plot train vs test
+    sns.FacetGrid(df_hlp, col=column_var, row=row_var,
+                  margin_titles=True, height=5) \
+        .map(sns.lineplot, x_var, "score",
+             hue="#" + df_hlp[color_var].astype('str') if color_var is not None else None,
+             style=df_hlp["fold"],
+             marker="o").add_legend().set_ylabels(metric)
+    if pdf is not None:
+        pdf_pages.savefig()
+
+    # Diff plot
+    sns.FacetGrid(df_gengap, col=column_var, row=row_var,
+                  margin_titles=True, height=5) \
+        .map(sns.lineplot, x_var, "train_test_score_diff",
+             hue="#" + df_gengap[color_var].astype('str') if color_var is not None else None,
+             marker="o").add_legend().set_ylabels(metric + "_diff (train vs. test)")
+
+    if pdf is not None:
+        pdf_pages.savefig()
+        pdf_pages.close()
+
+
+# Plot model comparison
+def plot_modelcomp(df_modelcomp_result, modelvar="model", runvar="run", scorevar="test_score", pdf=None):
+    fig, ax = plt.subplots(1, 1)
+    sns.boxplot(data=df_modelcomp_result, x=modelvar, y=scorevar, showmeans=True,
+                meanprops={"markerfacecolor": "black", "markeredgecolor": "black"},
+                ax=ax)
+    sns.lineplot(data=df_modelcomp_result, x=modelvar, y=scorevar,
+                 hue="#" + df_modelcomp_result[runvar].astype("str"), linewidth=0.5, linestyle=":",
+                 legend=None, ax=ax)
+    if pdf is not None:
+        fig.savefig(pdf)
+
+
+# Plot the learning curve
+def plot_learning_curve(n_train, score_train, score_test, pdf=None):
+    df_lc_result = pd.DataFrame(zip(n_train, score_train[:, 0], score_test[:, 0]),
+                                columns=["n_train", "train", "test"])\
+        .melt(id_vars="n_train", value_vars=["train", "test"], var_name="fold", value_name="score")
+
+    # Plot learning curve
+    fig, ax = plt.subplots(1, 1)
+    sns.lineplot(x="n_train", y="score", hue="fold", data=df_lc_result, marker="o", ax=ax)
+    if pdf is not None:
+        fig.savefig(pdf)
+
+
 # Plot ML-algorithm performance
 def plot_all_performances(y, yhat, labels=None, target_type="CLASS", colors=None, ylim=None, w=18, h=12, pdf=None):
     # y=df_test["target"]; yhat=yhat_test; ylim = None; w=12; h=8
@@ -440,7 +563,7 @@ def plot_all_performances(y, yhat, labels=None, target_type="CLASS", colors=None
 
         # Calibration
         ax_act = ax[1, 0]
-        true, predicted = calibration_curve(y, yhat[:, 1], n_bins=10)
+        true, predicted = calibration_curve(y, yhat[:, 1], n_bins=5)
         sns.lineplot(predicted, true, ax=ax_act, marker="o")
         props = {'xlabel': r"$\bar{\^y}$ in $\^y$-bin",
                  'ylabel': r"$\bar{y}$ in $\^y$-bin",
@@ -609,14 +732,14 @@ def plot_all_performances(y, yhat, labels=None, target_type="CLASS", colors=None
         ax_act = ax[1, 0]
 
         y_pred = yhat.argmax(axis=1)
-        freq_true = np.unique(y_true, return_counts=True)[1]
-        freqpct_true = np.round(np.divide(freq_true, len(y_true)) * 100, 1)
+        freq_true = np.unique(y, return_counts=True)[1]
+        freqpct_true = np.round(np.divide(freq_true, len(y)) * 100, 1)
         freq_pred = np.unique(y_pred, return_counts=True)[1]
-        freqpct_pred = np.round(np.divide(freq_pred, len(y_true)) * 100, 1)
+        freqpct_pred = np.round(np.divide(freq_pred, len(y)) * 100, 1)
 
         m_conf = confusion_matrix(y, y_pred)
-        prec = np.round(np.diag(m_conf) / m_conf.sum(axis=1) * 100, 1)
-        rec = np.round(np.diag(m_conf) / m_conf.sum(axis=0) * 100, 1)
+        prec = np.round(np.diag(m_conf) / m_conf.sum(axis=0) * 100, 1)
+        rec = np.round(np.diag(m_conf) / m_conf.sum(axis=1) * 100, 1)
         f1 = np.round(2 * prec * rec / (prec + rec), 1)
 
         ylabels = [labels[i] + " (" + str(freq_true[i]) + ": " + str(freqpct_true[i]) + "%)" for i in
@@ -680,6 +803,7 @@ def calc_varimp_by_permutation(df, df_ref, fit,
                                target_type="CLASS",
                                b_sample=None, b_all=None,
                                features=None,
+                               random_seed=999,
                                n_jobs=8):
     # df=df_train;  df_ref=df; target = "target"
     all_features = np.append(metr, cate)
@@ -697,10 +821,12 @@ def calc_varimp_by_permutation(df, df_ref, fit,
                                        fit.predict(CreateSparseMatrix(metr, cate, df_ref).fit_transform(df)))
 
     # Performance per variable after permutation
+    np.random.seed(random_seed)
     i_perm = np.random.permutation(np.arange(len(df)))  # permutation vector
 
     # TODO: add all variables used as parameter
-    def run_in_parallel(df_perm, feature):
+    def run_in_parallel(df, feature):
+        df_perm = df.copy()
         df_perm[feature] = df_perm[feature].values[i_perm]
         if target_type == "CLASS":
             perf = roc_auc_score(df_perm[target],
@@ -722,6 +848,27 @@ def calc_varimp_by_permutation(df, df_ref, fit,
         .assign(importance_sumnormed=lambda x: 100 * x["perf_diff"] / sum(x["perf_diff"]))
 
     return df_varimp
+
+
+# Plot variable importance
+def plot_variable_importance(df_varimp, mask=None, w=18, h=12, pdf=None):
+    # Prepare
+    n_features = len(df_varimp)
+    if mask is not None:
+        df_varimp = df_varimp[mask]
+
+    # Plot
+    fig, ax = plt.subplots(1, 1)
+    sns.barplot("importance", "feature", hue="Category", data=df_varimp,
+                dodge=False, palette=sns.xkcd_palette(["blue", "orange", "red"]), ax=ax)
+    ax.legend(loc=8, title="Importance")
+    ax.plot("importance_cum", "feature", data=df_varimp, color="grey", marker="o")
+    ax.set_xlabel(r"importance / cumulative importance in % (-$\bullet$-)")
+    ax.set_title("Top{0: .0f} (of{1: .0f}) Feature Importances".format(len(df_varimp), n_features))
+    fig.tight_layout()
+    if pdf:
+        fig.savefig(pdf)
+
 
 
 # Partial dependence
@@ -890,7 +1037,7 @@ class TargetEncoding(BaseEstimator, TransformerMixin):
         self._statistics = None
 
     def fit(self, df, y=None):
-        self._d_map = {x: df.loc[df[self.encode_flag_column] == 1, :]
+        self._d_map = {x: df.loc[df[self.encode_flag_column] == 1, :].reset_index(drop=True)
                             .groupby(x, as_index=False)[self.target].agg("mean")
                             .sort_values(self.target, ascending=False)
                             .assign(rank=lambda x: np.arange(len(x)) + 1)
@@ -905,7 +1052,7 @@ class TargetEncoding(BaseEstimator, TransformerMixin):
         df[self.features + "_ENCODED"] = df[self.features].apply(lambda x: x.map(self._d_map[x.name])
                                                                  .fillna(np.median(list(self._d_map[x.name].values()))))
         if self.encode_flag_column in df.columns.values:
-            return df.loc[df[self.encode_flag_column] != 1, :]
+            return df.loc[df[self.encode_flag_column] != 1, :].reset_index(drop=True)
         else:
             return df
 
@@ -917,11 +1064,48 @@ class DfSimpleImputer(SimpleImputer):
         self.features = features
 
     def fit(self, df, y=None, **kwargs):
-        fit = super().fit(df[self.features], **kwargs)
-        return fit
+        if len(self.features):
+            fit = super().fit(df[self.features], **kwargs)
+            return fit
+        else:
+            return self
 
     def transform(self, df):
-        df[self.features] = super().transform(df[self.features].values)
+        if len(self.features):
+            df[self.features] = super().transform(df[self.features].values)
+        return df
+
+
+# Random Imputer
+class DfRandomImputer(BaseEstimator, TransformerMixin):
+    def __init__(self, features, df_ref=None):
+        self.features = features
+        self.df_ref = df_ref
+
+    def fit(self, df, y=None):
+        if self.df_ref is None:
+            self.df_ref = df
+        return self
+
+    def transform(self, df=None, y=None):
+        #pdb.set_trace()
+        if len(self.features):
+            # for feature in self.features:
+            #     if df[feature].isnull().any():
+            #         df[feature] = np.where(np.isnan(df[feature]),
+            #                                self.df_ref[feature]
+            #                                .dropna()
+            #                                .sample(n=len(df[feature]), replace=True,
+            #                                        random_state=np.where(feature == self.features)[0][0]),
+            #                                df[feature])
+            df[self.features] = df[self.features].apply(lambda x:
+                                                        np.where(np.isnan(x),
+                                                                 self.df_ref[x.name]
+                                                                 .dropna()
+                                                                 .sample(n=len(x), replace=True,
+                                                                         random_state=
+                                                                         np.where(x.name == self.features)[0][0]),
+                                                                 x))
         return df
 
 
@@ -935,11 +1119,11 @@ class Convert(BaseEstimator, TransformerMixin):
         return self
 
     def transform(self, df):
-        df[self.features] = df[self.features].astype(self.convert_to)
-        if self.convert_to == "str":
-            df[self.features] = df[self.features].replace("nan", np.nan)
+        if len(self.features):
+            df[self.features] = df[self.features].astype(self.convert_to)
+            if self.convert_to == "str":
+                df[self.features] = df[self.features].replace("nan", np.nan)
         return df
-
 
 # Undersample
 class Undersample(BaseEstimator, TransformerMixin):
@@ -986,10 +1170,11 @@ class FeatureEngineeringTitanic(BaseEstimator, TransformerMixin):
 
 # Create sparse matrix
 class CreateSparseMatrix(BaseEstimator, TransformerMixin):
-    def __init__(self, metr=None, cate=None, df_ref=None):
+    def __init__(self, metr=None, cate=None, df_ref=None, sparse=True):
         self.metr = metr
         self.cate = cate
         self.df_ref = df_ref
+        self.sparse = sparse
         self._d_categories = None
 
     def fit(self, df=None, y=None):
@@ -1001,16 +1186,48 @@ class CreateSparseMatrix(BaseEstimator, TransformerMixin):
 
     def transform(self, df=None, y=None):
         if self.metr is not None and len(self.metr) > 0:
-            m_metr = df[self.metr].to_sparse().to_coo()
+            if self.sparse:
+                # m_metr = df[self.metr].to_sparse().to_coo()
+                m_metr = df[self.metr].astype(pd.SparseDtype("float", np.nan))
+            else:
+                m_metr = df[self.metr].to_numpy()
         else:
             m_metr = None
         if self.cate is not None and len(self.cate) > 0:
-            enc = OneHotEncoder(categories=self._d_categories)
-            if len(self.cate) == 1:
-                m_cate = enc.fit_transform(df[self.cate].reshape(-1, 1), y)
-            else:
-                m_cate = enc.fit_transform(df[self.cate], y)
+            enc = OneHotEncoder(categories=self._d_categories, sparse=self.sparse)
+
+            m_cate = enc.fit_transform(df[self.cate], y)
+            # if len(self.cate) == 1:
+            #     m_cate = enc.fit_transform(df[self.cate].reshape(-1, 1), y)
+            # else:
+            #     m_cate = enc.fit_transform(df[self.cate], y)
         else:
             m_cate = None
-        return hstack([m_metr, m_cate], format="csr")
+        if self.sparse:
+            return hstack([m_metr, m_cate], format="csr")
+        else:
+            return np.hstack([m_metr, m_cate])
 
+
+# NearestCentroid fails in Classifier context
+class NearestCentroidClassifier(NearestCentroid):
+    def __init__(self, metric='euclidean', shrink_threshold=None):
+        super().__init__(metric=metric, shrink_threshold=shrink_threshold)
+
+    def predict_proba(self, X):
+        # pdb.set_trace()
+        tmp = self.predict(X)
+        return np.column_stack((tmp, tmp))
+
+# # GLMNET Classifier: ONLY on Unix
+# class glmnetClassifier(BaseEstimator, ClassifierMixin):
+#
+#     def __init__(self, lambdau=1, alpha=1):
+#         self.lambdau = lambdau
+#         self.alpha = alpha
+#
+#     def fit(self, X, y=None):
+#         return glmnet(x=X, y=sp.array(y, dtype="float"), family="binomial", lambdau=self.lambdau, alpha=self.alpha)
+#
+#     def predict_proba(self, X, y=None):
+#         glmnetPredict(self, newx=X, ptype='response')
