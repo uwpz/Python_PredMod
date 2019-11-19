@@ -12,27 +12,30 @@ from sklearn.base import clone
 import xgboost as xgb
 
 # Main parameter
-TARGET_TYPE = "REGR"
+TARGET_TYPE = "CLASS"
 
 # Specific parameters
 if TARGET_TYPE == "CLASS":
     metric = "roc_auc"  # metric for peformance comparison
     importance_cut = 99.9
-    topn = 10
+    topn = 8
     ylim_res = (-1, 1)
 
 if TARGET_TYPE == "REGR":
     metric = make_scorer(spearman_loss_func, greater_is_better=True)
     importance_cut = 95
-    topn = 5
+    topn = 15
     ylim_res = (-5e4, 5e4)
 
-
 # Load results from exploration
+df = metr_standard = cate_standard = metr_binned = cate_binned = metr_encoded = cate_encoded = None
 with open(TARGET_TYPE + "_1_explore.pkl", "rb") as file:
-    d_vars = pickle.load(file)
-df, metr, cate, features = d_vars["df"], d_vars["metr"], d_vars["cate"], d_vars["features"]
-
+    d_pick = pickle.load(file)
+for key, val in d_pick.items():
+    exec(key + "= val")
+metr = metr_standard
+cate = cate_standard
+features = np.append(metr, cate)
 
 # ######################################################################################################################
 # Prepare
@@ -53,22 +56,23 @@ if TARGET_TYPE == "CLASS":
     # Training data: Just take data from train fold (take all but n_maxpersample at most)
     df.loc[df["fold"] == "train", "target"].describe()
     under_samp = Undersample(n_max_per_level=500)
-    df_train = under_samp.fit_transform(df.query("fold == 'train'"))
+    df_train = under_samp.fit_transform(df.query("fold == 'train'").reset_index(drop=True))
     b_sample = under_samp.b_sample
     b_all = under_samp.b_all
     print(b_sample, b_all)
 
 if TARGET_TYPE == "REGR":
-    df_train = df.query("fold == 'train'").sample(n=min(df.query("fold == 'train'").shape[0], int(5e3)))
+    df_train = (df.query("fold == 'train'").sample(n=min(df.query("fold == 'train'").shape[0], int(5e3)))
+                .reset_index(drop=True))
     b_sample = None
     b_all = None
 
 
 # Test data
-df_test = df.query("fold == 'test'")  # .sample(300) #ATTENTION: Do not sample in final run!!!
+df_test = df.query("fold == 'test'").reset_index(drop=True)  # .sample(300) #ATTENTION: Do not sample in final run!!!
 
 # Combine again
-df_traintest = pd.concat([df_train, df_test])
+df_traintest = pd.concat([df_train, df_test]).reset_index(drop=True)
 
 # Folds for crossvalidation and check
 split_my5fold = TrainTestSep(5, "cv")
@@ -89,12 +93,14 @@ if TARGET_TYPE == "CLASS":
     clf = xgb.XGBClassifier(n_estimators=n_estimators, learning_rate=learning_rate,
                             max_depth=max_depth, min_child_weight=min_child_weight,
                             colsample_bytree=colsample_bytree, subsample=subsample,
-                            gamma=0)
+                            gamma=0,
+                            verbosity=0)
 if TARGET_TYPE == "REGR":
     clf = xgb.XGBRegressor(n_estimators=n_estimators, learning_rate=learning_rate,
                            max_depth=max_depth, min_child_weight=min_child_weight,
                            colsample_bytree=colsample_bytree, subsample=subsample,
-                           gamma=0)
+                           gamma=0,
+                           verbosity=0)
 X_train = CreateSparseMatrix(metr=metr, cate=cate, df_ref=df_traintest).fit_transform(df_train)
 fit = clf.fit(X_train, df_train["target"].values)
 
@@ -117,7 +123,8 @@ plot_all_performances(df_test["target"], yhat_test, target_type=TARGET_TYPE, yli
 
 # --- Check performance for crossvalidated fits ---------------------------------------------------------------------
 d_cv = cross_validate(clf,
-                      CreateSparseMatrix(metr=metr, cate=cate, df_ref=df_traintest).fit_transform(df_traintest),
+                      (CreateSparseMatrix(metr=metr, cate=cate, df_ref=df_traintest)
+                          .fit_transform(df_traintest)),
                       df_traintest["target"].values,
                       cv=split_my5fold.split(df_traintest),  # special 5fold
                       scoring=metric, n_jobs=5,
@@ -181,6 +188,7 @@ plt.close(fig="all")
 if TARGET_TYPE in ["CLASS", "REGR"]:
     plot_distr(df_test, features, target="abs_residual", target_type="REGR", ylim=(0,ylim_res[1]),
                ncol=3, nrow=2, w=18, h=12, pdf=plotloc + TARGET_TYPE + "_diagnosis_absolute_residual.pdf")
+plt.close(fig="all")
 
 
 # ---- Explain bad predictions ------------------------------------------------------------------------------------
@@ -217,15 +225,8 @@ for i, (i_train, i_test) in enumerate(split_my5fold.split(df_traintest)):
 
 
 # Plot
-fig, ax = plt.subplots(1, 1)
-sns.barplot("importance", "feature", hue="Category", data=df_varimp.iloc[range(topn)],
-            dodge=False, palette=sns.xkcd_palette(["blue", "orange", "red"]), ax=ax)
-ax.plot("importance_cum", "feature", data=df_varimp.iloc[range(topn)], color="grey", marker="o")
-ax.set_xlabel(r"importance / cumulative importance in % (-$\bullet$-)")
-# noinspection PyTypeChecker
-ax.set_title("Top{0: .0f} (of{1: .0f}) Feature Importances".format(topn, len(features)))
-fig.tight_layout()
-fig.savefig(plotloc + TARGET_TYPE + "_variable_importance.pdf")
+plot_variable_importance(df_varimp, mask=df_varimp["feature"].isin(topn_features),
+                         pdf = plotloc + TARGET_TYPE + "_variable_importance.pdf")
 
 
 # --- Compare variable importance for train and test (hints to variables prone to overfitting) -------------------------

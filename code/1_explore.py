@@ -8,17 +8,19 @@ from initialize import *
 # import sys; sys.path.append(getcwd() + "\\code") #not needed if code is marked as "source" in pycharm
 
 # Specific libraries
-from scipy.stats.mstats import winsorize
+#
+
+# Silent plotting
+plt.ioff(); matplotlib.use('Agg')
 
 # Main parameter
-TARGET_TYPE = "CLASS"
+TARGET_TYPE = "REGR"
 
-# Specific parameters
-if TARGET_TYPE == "CLASS":
-    ylim = None
-    cutoff_corr = 0.1
-    cutoff_varimp = 0.52
-    color = twocol
+# Specific parameters (CLASS is default)
+ylim = None
+cutoff_corr = 0.1
+cutoff_varimp = 0.52
+color = twocol
 if TARGET_TYPE == "MULTICLASS":
     ylim = None
     cutoff_corr = 0.1
@@ -40,9 +42,10 @@ if TARGET_TYPE == "REGR":
 # noinspection PyUnresolvedReferences
 if TARGET_TYPE == "CLASS":
     df_orig = pd.read_csv(dataloc + "titanic.csv")
-if TARGET_TYPE in ["REGR", "MULTICLASS"]:
+else:
     df_orig = pd.read_csv(dataloc + "AmesHousing.txt", delimiter="\t")
-    df_orig.columns = df_orig.columns.str.replace(" ","_")
+    df_orig.columns = df_orig.columns.str.replace(" ", "_")
+    # alternatively: df_orig.rename(columns = lambda x: x.replace(" ", "_"), inplace=True)
 df_orig.describe()
 df_orig.describe(include=["object"])
 
@@ -66,7 +69,7 @@ df = df_orig.copy()
 
 if TARGET_TYPE == "CLASS":
     df_meta = pd.read_excel(dataloc + "datamodel_titanic.xlsx", header=1)
-if TARGET_TYPE in ["REGR", "MULTICLASS"]:
+else:
     df_meta = pd.read_excel(dataloc + "datamodel_AmesHousing.xlsx", header=1)
 
 # Check
@@ -74,7 +77,7 @@ print(setdiff(df.columns.values, df_meta["variable"].values))
 print(setdiff(df_meta.loc[df_meta["category"] == "orig", "variable"].values, df.columns.values))
 
 # Filter on "ready"
-df_meta_sub = df_meta.loc[df_meta["status"].isin(["ready", "derive"])]
+df_meta_sub = df_meta.loc[df_meta["status"].isin(["ready", "derive"])].reset_index()
 
 
 # --- Feature engineering -----------------------------------------------------------------------------------------
@@ -85,7 +88,7 @@ if TARGET_TYPE == "CLASS":
     df["fare_pp"] = df["fare"] / df.groupby("ticket")["fare"].transform("count")
     df[["deck", "familysize", "fare_pp"]].describe(include="all")
 if TARGET_TYPE in ["REGR", "MULTICLASS"]:
-    pass # number of rooms, sqm_per_room, ...
+    pass  # number of rooms, sqm_per_room, ...
 
 # Check
 print(setdiff(df_meta["variable"].values, df.columns.values))
@@ -106,8 +109,8 @@ df["target"].describe()
 np.random.seed(123)
 df["fold"] = np.random.permutation(pd.qcut(np.arange(len(df)), q=[0, 0.1, 0.8, 1], labels=["util", "train", "test"]))
 print(df.fold.value_counts())
-df["fold_num"] = df["fold"].map({"train": 0, "util": 0, "test": 1})  # Used for pedicting test data
-df["encode_flag"] = df["fold"].map({"train": 0, "test": 0, "util": 1})  # Used for encoding
+df["fold_num"] = df["fold"].replace({"train": 0, "util": 0, "test": 1})  # Used for pedicting test data
+df["encode_flag"] = df["fold"].replace({"train": 0, "test": 0, "util": 1})  # Used for encoding
 
 # Define the id
 df["id"] = np.arange(len(df)) + 1
@@ -132,7 +135,7 @@ df[metr].describe()
 df[metr + "_BINNED"] = df[metr].apply(lambda x: char_bins(x))
 
 # Convert missings to own level ("(Missing)")
-df[metr + "_BINNED"] = df[metr + "_BINNED"].replace("nan", np.nan).fillna("(Missing)")
+df[metr + "_BINNED"] = df[metr + "_BINNED"].fillna("(Missing)")
 print(create_values_df(df[metr + "_BINNED"], 11))
 
 # Get binned variables with just 1 bin (removed later)
@@ -143,25 +146,24 @@ onebin = (metr + "_BINNED")[df[metr + "_BINNED"].nunique() == 1]
 
 # Remove covariates with too many missings from metr
 misspct = df[metr].isnull().mean().round(3)  # missing percentage
-misspct.sort_values(ascending=False)  # view in descending order
+print("misspct:\n", misspct.sort_values(ascending=False))  # view in descending order
 remove = misspct[misspct > 0.95].index.values  # vars to remove
-print(remove)
 metr = setdiff(metr, remove)  # adapt metadata
 
 # Check for outliers and skewness
 df[metr].describe()
-if TARGET_TYPE in ["CLASS","REGR"]:
-    plot_distr(df, metr, target_type=TARGET_TYPE, color=color, ylim=ylim,
+if TARGET_TYPE in ["CLASS", "REGR"]:
+    plot_distr(df, metr, target_type=TARGET_TYPE,
+               color=color, ylim=ylim,
                ncol=4, nrow=2, w=18, h=12, pdf=plotloc + TARGET_TYPE + "_distr_metr.pdf")
 
-# Winsorize
-df[metr] = df[metr].apply(lambda x: x.clip(x.quantile(0.02),
-                                           x.quantile(0.98)))  # hint: plot again before deciding for log-trafo
+# Winsorize (hint: plot again before deciding for log-trafo)
+df = Winsorize(features=metr, lower_quantile=0.02, upper_quantile=0.98).fit_transform(df)
 
 # Log-Transform
 if TARGET_TYPE == "CLASS":
     tolog = np.array(["fare"], dtype="object")
-if TARGET_TYPE in ["REGR", "MULTICLASS"]:
+else:
     tolog = np.array(["Lot_Area"], dtype="object")
 df[tolog + "_LOG_"] = df[tolog].apply(lambda x: np.log(x - min(0, np.min(x)) + 1))
 metr = np.where(np.isin(metr, tolog), metr + "_LOG_", metr)  # adapt metadata (keep order)
@@ -172,15 +174,15 @@ df.rename(columns=dict(zip(tolog + "_BINNED", tolog + "_LOG_" + "_BINNED")), inp
 
 # Univariate variable importance
 if TARGET_TYPE in ["REGR", "CLASS"]:
-    varimp_metr = calc_imp(df, metr, target_type=TARGET_TYPE)
+    varimp_metr = calc_imp(df, np.append(metr, metr + "_BINNED"), target_type=TARGET_TYPE)
     print(varimp_metr)
-    varimp_metr_binned = calc_imp(df, metr + "_BINNED", target_type=TARGET_TYPE)
-    print(varimp_metr_binned)
+else:
+    varimp_metr = None
 
 # Plot
 if TARGET_TYPE in ["REGR", "CLASS"]:
-    plot_distr(df, features=np.hstack(zip(metr, metr + "_BINNED")),
-               varimp=pd.concat([varimp_metr, varimp_metr_binned]), target_type=TARGET_TYPE, color=color, ylim=ylim,
+    plot_distr(df, features=np.column_stack((metr, metr + "_BINNED")).ravel(), target_type=TARGET_TYPE,
+               varimp=varimp_metr, color=color, ylim=ylim,
                ncol=4, nrow=2, w=18, h=12, pdf=plotloc + TARGET_TYPE + "_distr_metr_final.pdf")
 
 
@@ -206,8 +208,8 @@ varimp_metr_fold = calc_imp(df, metr, "fold_num")
 
 # Plot: only variables with with highest importance
 metr_toprint = varimp_metr_fold[varimp_metr_fold > cutoff_varimp].index.values
-plot_distr(df, metr_toprint, "fold_num", varimp=varimp_metr_fold,
-           target_type="CLASS",
+plot_distr(df, metr_toprint, target="fold_num", target_type="CLASS",
+           varimp=varimp_metr_fold,
            ncol=2, nrow=2, w=12, h=8, pdf=plotloc + TARGET_TYPE + "_distr_metr_folddep.pdf")
 
 
@@ -218,7 +220,8 @@ df["MISS_" + miss] = pd.DataFrame(np.where(df[miss].isnull(), "miss", "no_miss")
 df["MISS_" + miss].describe()
 
 # Impute missings with randomly sampled value (or median, see below)
-df = DfSimpleImputer(features=miss, strategy="median").fit_transform(df)
+df = DfRandomImputer(features=miss).fit_transform(df)
+# df = DfSimpleImputer(features=miss, strategy="median").fit_transform(df)
 df[miss].isnull().sum()
 
 
@@ -230,12 +233,16 @@ df[miss].isnull().sum()
 
 # Nominal variables
 cate = df_meta_sub.loc[df_meta_sub.type.isin(["nomi", "ordi"]), "variable"].values
-df[cate] = df[cate].astype("str").replace("nan", np.nan)
+df = Convert(features=cate, convert_to="str").fit_transform(df)
 df[cate].describe()
 
 # Convert ordinal features to make it "alphanumerically sorted"
 if TARGET_TYPE == "CLASS":
     df["familysize"] = df["familysize"].str.zfill(2)
+else:
+    tmp = ["Overall_Qual","Overall_Cond","Bsmt_Full_Bath","Full_Bath","Half_Bath","Bedroom_AbvGr","TotRms_AbvGrd",
+           "Fireplaces","Garage_Cars"]
+    df[tmp] = df[tmp].apply(lambda x: x.str.zfill(2))
 
 
 # --- Handling factor values ----------------------------------------------------------------------------------------
@@ -247,7 +254,7 @@ df[cate].describe()
 # Get "too many members" columns and copy these for additional encoded features (for tree based models)
 if TARGET_TYPE in ["REGR", "CLASS"]:
     topn_toomany = 10
-    levinfo = df[cate].apply(lambda x: x.unique().size).sort_values(ascending=False)  # number of levels
+    levinfo = df[cate].nunique().sort_values(ascending=False)  # number of levels
     print(levinfo)
     toomany = levinfo[levinfo > topn_toomany].index.values
     print(toomany)
@@ -268,11 +275,13 @@ if TARGET_TYPE in ["REGR", "CLASS"]:
 if TARGET_TYPE in ["REGR", "CLASS"]:
     varimp_cate = calc_imp(df, np.append(cate, ["MISS_" + miss]), target_type=TARGET_TYPE)
     print(varimp_cate)
+else:
+    varimp_cate = None
 
 # Check
 if TARGET_TYPE in ["REGR", "CLASS"]:
-    plot_distr(df, np.append(cate, ["MISS_" + miss]), varimp=varimp_cate, target_type=TARGET_TYPE,
-               color=color, ylim=ylim,
+    plot_distr(df, np.append(cate, ["MISS_" + miss]), target_type=TARGET_TYPE,
+               varimp=varimp_cate, color=color, ylim=ylim,
                nrow=2, ncol=3, w=18, h=12, pdf=plotloc + TARGET_TYPE + "_distr_cate.pdf")  # maybe plot miss separately
 
 
@@ -280,7 +289,7 @@ if TARGET_TYPE in ["REGR", "CLASS"]:
 
 # Remove leakage variables
 if TARGET_TYPE == "CLASS":
-    cate = setdiff(cate, ["boat","xxx"])
+    cate = setdiff(cate, ["boat", "xxx"])
     toomany = setdiff(toomany, ["boat", "xxx"])
 
 # Remove highly/perfectly (>=99%) correlated (the ones with less levels!)
@@ -296,7 +305,8 @@ varimp_cate_fold = calc_imp(df, np.append(cate, ["MISS_" + miss]), "fold_num")
 
 # Plot: only variables with with highest importance
 cate_toprint = varimp_cate_fold[varimp_cate_fold > cutoff_varimp].index.values
-plot_distr(df, cate_toprint, "fold_num", varimp=varimp_cate_fold, target_type="CLASS",
+plot_distr(df, cate_toprint, target="fold_num", target_type="CLASS",
+           varimp=varimp_cate_fold,
            ncol=2, nrow=2, w=12, h=8, pdf=plotloc + TARGET_TYPE + "_distr_cate_folddep.pdf")
 
 
@@ -326,10 +336,12 @@ setdiff(df.columns.values.tolist(), all_features)
 
 # --- Remove burned data ----------------------------------------------------------------------------------------
 
-df = df.query("fold != 'util'").reset_index()
+df = df.query("fold != 'util'").reset_index(drop=True)
 
 
 # --- Save image ----------------------------------------------------------------------------------------------------
+
+# Clean up
 plt.close(fig="all")  # plt.close(plt.gcf())
 del df_orig
 

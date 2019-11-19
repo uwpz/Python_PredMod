@@ -20,7 +20,6 @@ import scipy as sp
 from scipy.stats import chi2_contingency
 from scipy.sparse import hstack
 from scipy.cluster.hierarchy import ward, fcluster
-from scipy.stats.mstats import winsorize
 
 # ML
 from sklearn.metrics import *
@@ -50,9 +49,8 @@ import pickle
 #import pydotplus
 #import xlwt
 
-# Silent plotting
-#plt.ioff() #plt.ion()
-#matplotlib.use('Agg') #TkAgg
+# Silent plotting (Overwrite to get default: plt.ion();  matplotlib.use('TkAgg'))
+plt.ioff(); matplotlib.use('Agg')
 
 
 # ######################################################################################################################
@@ -64,10 +62,9 @@ dataloc = "./data/"
 plotloc = "./output/"
 
 # Util
-sns.set(style="whitegrid")
+sns.set(style="white")
 pd.set_option('display.width', 320)
 pd.set_option('display.max_columns', 20)
-# plt.ioff(); plt.ion()  # Interactive plotting? ion is default
 
 # Other
 twocol = ["red", "green"]
@@ -91,7 +88,8 @@ def char_bins(series, n_bins=10):
     bins = pd.qcut(series, n_bins, duplicates="drop")
     bins.cat.categories = ["q" + str(i).zfill(2)  # + ":" + bins.cat.categories.astype("str")[i-1]
                            for i in 1 + np.arange(len(bins.cat.categories))]
-    return bins.astype("str")
+    bins = bins.astype("str").replace("nan", np.nan)
+    return bins
 
 
 def spearman_loss_func(y_true, y_pred):
@@ -104,7 +102,7 @@ def rmse(y_true, y_pred):
     return rmse
 
 def auc(y_true, y_pred):
-    auc  = roc_auc_score(y_true, y_pred)
+    auc = roc_auc_score(y_true, y_pred)
     return auc
 
 def acc(y_true, y_pred):
@@ -129,7 +127,8 @@ def show_figure(fig):
     
 
 # Plot distribution regarding target
-def plot_distr(df, features, target="target", target_type="CLASS", color=["blue", "red"], varimp=None, ylim=None,
+def plot_distr(df, features, target="target", target_type="CLASS",
+               varimp=None, color=["blue", "red"], ylim=None, regplot=True, min_width=0,
                nrow=1, ncol=1, w=8, h=6, pdf=None):
     # df = df_test; features = cate; target = "residual"; target_type="REGR"; color=["blue", "red"]; varimp=None;
     # ylim = ylim_res; ncol=2; nrow=2; pdf=None; w=8; h=6
@@ -167,7 +166,7 @@ def plot_distr(df, features, target="target", target_type="CLASS", color=["blue"
                     df_plot["w"] = 0.9 * df_plot["w"] / max(df_plot["w"])
                     df_plot[feature_act + "_new"] = df_plot[feature_act] + " (" + \
                                                     (df_plot["pct"]).round(1).astype(str) + "%)"
-                    df_plot["new_w"] = np.where(df_plot["w"].values < 0.2, 0.2, df_plot["w"])
+                    df_plot["new_w"] = np.where(df_plot["w"].values < min_width, min_width, df_plot["w"])
                     if target_type == "CLASS":
                         # Target barplot
                         # sns.barplot(df_tmp.h, df_tmp[cate[page * ppp + i]], orient="h", color="coral", ax=axact)
@@ -192,7 +191,7 @@ def plot_distr(df, features, target="target", target_type="CLASS", color=["blue"
                         ax_act.set_xlabel(target)
                     ax_act.set_yticklabels(df_plot[feature_act + "_new"].values)
                     if varimp is not None:
-                        ax_act.set_title(feature_act + " (VI:" + str(varimp[feature_act]) + ")")
+                        ax_act.set_title(feature_act + " (VI: " + str(varimp[feature_act]) + ")")
                     else:
                         ax_act.set_title(feature_act)
                     ax_act.axvline(np.mean(df[target]), ls="dotted", color="black")
@@ -210,6 +209,8 @@ def plot_distr(df, features, target="target", target_type="CLASS", color=["blue"
                         inset_ax.barh(df_plot[feature_act], df_plot.w,
                                       color="lightgrey", edgecolor="black", linewidth=1)
                     if target_type == "REGR":
+                        if ylim is not None:
+                            ax_act.axvline(ylim[0], color="black")
                         df_plot.plot.barh(y="w", x=feature_act,
                                           color="lightgrey", ax=inset_ax, edgecolor="black", linewidth=1, legend=False)
                         # inset_ax.barh(df_plot[feature_act], df_plot.w, color="lightgrey", edgecolor="black",
@@ -226,11 +227,11 @@ def plot_distr(df, features, target="target", target_type="CLASS", color=["blue"
                         #     .map(sns.distplot, metr[i])\
                         #     .add_legend() # does not work for multiple axes
                         if varimp is not None:
-                            ax_act.set_title(feature_act + " (VI:" + str(varimp[feature_act]) + ")")
+                            ax_act.set_title(feature_act + " (VI: " + str(varimp[feature_act]) + ")")
                         else:
                             ax_act.set_title(feature_act)
                         ax_act.set_ylabel("density")
-                        ax_act.set_xlabel(feature_act + "(NA: " +
+                        ax_act.set_xlabel(feature_act + " (NA: " +
                                           str((df[feature_act].isnull().mean() * 100).round(1)) +
                                           "%)")
 
@@ -255,20 +256,22 @@ def plot_distr(df, features, target="target", target_type="CLASS", color=["blue"
                             tmp_scale = (ylim[1] - ylim[0]) / (np.max(df[target]) - np.min(df[target]))
                         else:
                             tmp_scale = 1
-                        tmp_cmap = mcolors.LinearSegmentedColormap.from_list("wh_bl_yl_rd",
-                                                                            [(1, 1, 1, 0), "blue", "yellow", "red"])
+                        tmp_cmap = mcolors.LinearSegmentedColormap.from_list("gr_bl_yl_rd",
+                                                                            [(0.5, 0.5, 0.5, 0), "blue", "yellow",
+                                                                             "red"])
                         ax_act.set_facecolor('0.98')
                         p = ax_act.hexbin(df[feature_act], df[target],
                                           gridsize=(int(50 * tmp_scale), 50),
                                           cmap=tmp_cmap)
                         plt.colorbar(p, ax=ax_act)
-                        sns.regplot(feature_act, target, df, lowess=True, scatter=False, color="black", ax=ax_act)
+                        if regplot == True:
+                            sns.regplot(feature_act, target, df, lowess=True, scatter=False, color="black", ax=ax_act)
                         if varimp is not None:
-                            ax_act.set_title(feature_act + " (VI:" + str(varimp[feature_act]) + ")")
+                            ax_act.set_title(feature_act + " (VI: " + str(varimp[feature_act]) + ")")
                         else:
                             ax_act.set_title(feature_act)
                         ax_act.set_ylabel(target)
-                        ax_act.set_xlabel(feature_act + "(NA: " +
+                        ax_act.set_xlabel(feature_act + " (NA: " +
                                           str(df[feature_act].isnull().mean().round(3) * 100) +
                                           "%)")
                         ylim = ax_act.get_ylim()
@@ -277,7 +280,7 @@ def plot_distr(df, features, target="target", target_type="CLASS", color=["blue"
 
                         # Inner Histogram
                         ax_act.set_ylim(ylim[0] - 0.4 * (ylim[1] - ylim[0]))
-                        inset_ax = ax_act.inset_axes([0, 0.05, 1, 0.15])
+                        inset_ax = ax_act.inset_axes([0, 0.07, 1, 0.2])
                         inset_ax.set_axis_off()
                         inset_ax.get_yaxis().set_visible(False)
                         ax_act.get_shared_x_axes().join(ax_act, inset_ax)
@@ -288,12 +291,12 @@ def plot_distr(df, features, target="target", target_type="CLASS", color=["blue"
                         # Inner-inner Boxplot
                         #ylim_inner = inset_ax.get_ylim()
                         #inset_ax.set_ylim(ylim_inner[0] - 0.35 * (ylim_inner[1] - ylim_inner[0]))
-                        inset_ax = ax_act.inset_axes([0, 0, 1, 0.05])
-                        #inset_ax.set_axis_off()
+                        inset_ax = ax_act.inset_axes([0, 0.01, 1, 0.05])
+                        inset_ax.set_axis_off()
                         inset_ax.get_shared_x_axes().join(ax_act, inset_ax)
                         sns.boxplot(x=df.loc[i_bool, feature_act], palette=["grey"], ax=inset_ax)
                         #inset_ax.set_xlabel("")
-                        inset_ax.set_xlabel(feature_act + "(NA: " +
+                        inset_ax.set_xlabel(feature_act + " (NA: " +
                                           str(df[feature_act].isnull().mean().round(3) * 100) +
                                           "%)")
                         # plt.show()
@@ -306,7 +309,7 @@ def plot_distr(df, features, target="target", target_type="CLASS", color=["blue"
         if pdf is not None:
             pdf_pages.savefig(fig)
             # plt.close(fig)
-        plt.show()
+        #plt.show()
     if pdf is not None:
         pdf_pages.close()
 
@@ -469,7 +472,7 @@ def plot_gengap(cv_results_, metric, x_var, color_var=None, column_var=None, row
         .rename(columns={"mean_test_" + metric: "test",
                          "mean_train_" + metric: "train"}) \
         .assign(train_test_score_diff=lambda x: x.train - x.test) \
-        .reset_index()
+        .reset_index(drop=True)
     df_hlp = pd.melt(df_gengap,
                      id_vars=np.setdiff1d(df_gengap.columns.values, ["test", "train"]),
                      value_vars=["test", "train"],
@@ -524,7 +527,8 @@ def plot_learning_curve(n_train, score_train, score_test, pdf=None):
 
 
 # Plot ML-algorithm performance
-def plot_all_performances(y, yhat, labels=None, target_type="CLASS", colors=None, ylim=None, w=18, h=12, pdf=None):
+def plot_all_performances(y, yhat, labels=None, target_type="CLASS", regplot=True,
+                          colors=None, ylim=None, w=18, h=12, pdf=None):
     # y=df_test["target"]; yhat=yhat_test; ylim = None; w=12; h=8
 
     if target_type == "CLASS":
@@ -534,7 +538,8 @@ def plot_all_performances(y, yhat, labels=None, target_type="CLASS", colors=None
         ax_act = ax[0, 0]
         fpr, tpr, cutoff = roc_curve(y, yhat[:, 1])
         roc_auc = roc_auc_score(y, yhat[:, 1])
-        sns.lineplot(fpr, tpr, ax=ax_act, palette=sns.xkcd_palette(["red"]))
+        #sns.lineplot(fpr, tpr, ax=ax_act, palette=sns.xkcd_palette(["red"]))
+        ax_act.plot(fpr, tpr)
         props = {'xlabel': r"fpr: P($\^y$=1|$y$=0)",
                  'ylabel': r"tpr: P($\^y$=1|$y$=1)",
                  'title': "ROC (AUC = {0:.2f})".format(roc_auc)}
@@ -564,7 +569,8 @@ def plot_all_performances(y, yhat, labels=None, target_type="CLASS", colors=None
         # Calibration
         ax_act = ax[1, 0]
         true, predicted = calibration_curve(y, yhat[:, 1], n_bins=5)
-        sns.lineplot(predicted, true, ax=ax_act, marker="o")
+        #sns.lineplot(predicted, true, ax=ax_act, marker="o")
+        ax_act.plot(predicted, true, "o-")
         props = {'xlabel': r"$\bar{\^y}$ in $\^y$-bin",
                  'ylabel': r"$\bar{y}$ in $\^y$-bin",
                  'title': "Calibration"}
@@ -574,7 +580,8 @@ def plot_all_performances(y, yhat, labels=None, target_type="CLASS", colors=None
         ax_act = ax[1, 1]
         prec, rec, cutoff = precision_recall_curve(y, yhat[:, 1])
         prec_rec_auc = average_precision_score(y, yhat[:, 1])
-        sns.lineplot(rec, prec, ax=ax_act, palette=sns.xkcd_palette(["red"]))
+        #sns.lineplot(rec, prec, ax=ax_act, palette=sns.xkcd_palette(["red"]))
+        ax_act.plot(rec, prec)
         props = {'xlabel': r"recall=tpr: P($\^y$=1|$y$=1)",
                  'ylabel': r"precision: P($y$=1|$\^y$=1)",
                  'title': "Precision Recall Curve (AUC = {0:.2f})".format(prec_rec_auc)}
@@ -612,7 +619,8 @@ def plot_all_performances(y, yhat, labels=None, target_type="CLASS", colors=None
                               gridsize=(int(50 * tmp_scale), 50),
                               cmap=tmp_cmap)
             plt.colorbar(p, ax=ax_act)
-            sns.regplot(x, y, lowess=True, scatter=False, color="black", ax=ax_act)
+            if regplot == True:
+                sns.regplot(x, y, lowess=True, scatter=False, color="black", ax=ax_act)
             ax_act.set_title(title)
             ax_act.set_ylabel(ylabel)
             ax_act.set_xlabel(xlabel)
@@ -804,7 +812,7 @@ def calc_varimp_by_permutation(df, df_ref, fit,
                                b_sample=None, b_all=None,
                                features=None,
                                random_seed=999,
-                               n_jobs=8):
+                               n_jobs=4):
     # df=df_train;  df_ref=df; target = "target"
     all_features = np.append(metr, cate)
     if features is None:
@@ -837,12 +845,12 @@ def calc_varimp_by_permutation(df, df_ref, fit,
             perf = spearman_loss_func(df_perm[target],
                                       fit.predict(CreateSparseMatrix(metr, cate, df_ref).fit_transform(df_perm)))
         return perf
-    perf = Parallel(n_jobs=n_jobs)(delayed(run_in_parallel)(df, feature)
-                                   for feature in features)
+    perf = Parallel(n_jobs=n_jobs, max_nbytes='100M')(delayed(run_in_parallel)(df, feature)
+                                                      for feature in features)
 
     # Collect performances and calculate importance
     df_varimp = pd.DataFrame({"feature": features, "perf_diff": np.maximum(0, perf_orig - perf)})\
-        .sort_values(["perf_diff"], ascending=False)\
+        .sort_values(["perf_diff"], ascending=False).reset_index(drop=False)\
         .assign(importance=lambda x: 100 * x["perf_diff"] / max(x["perf_diff"]))\
         .assign(importance_cum=lambda x: 100 * x["perf_diff"].cumsum() / sum(x["perf_diff"]))\
         .assign(importance_sumnormed=lambda x: 100 * x["perf_diff"] / sum(x["perf_diff"]))
@@ -878,7 +886,7 @@ def calc_partial_dependence(df, df_ref, fit,
                             b_sample=None, b_all=None,
                             features=None,
                             quantiles=np.arange(0, 1.1, 0.1),
-                            n_jobs=8):
+                            n_jobs=4):
     # df=df_test;  df_ref=df_traintest; target = "target"; target_type=TARGET_TYPE; features=None;
     # quantiles = np.arange(0, 1.1, 0.1);n_jobs=4
     all_features = np.append(metr, cate)
@@ -912,8 +920,8 @@ def calc_partial_dependence(df, df_ref, fit,
                                        pd.DataFrame({"feature": feature, "value": str(value), "yhat_mean": yhat_mean},
                                                     index=[0])])
         return df_pd_feature
-    df_pd = pd.concat(Parallel(n_jobs=n_jobs)(delayed(run_in_parallel)(feature)
-                                              for feature in features))
+    df_pd = pd.concat(Parallel(n_jobs=n_jobs, max_nbytes='100M')(delayed(run_in_parallel)(feature)
+                                                                 for feature in features))
     return df_pd
 
 
@@ -1052,7 +1060,8 @@ class TargetEncoding(BaseEstimator, TransformerMixin):
         df[self.features + "_ENCODED"] = df[self.features].apply(lambda x: x.map(self._d_map[x.name])
                                                                  .fillna(np.median(list(self._d_map[x.name].values()))))
         if self.encode_flag_column in df.columns.values:
-            return df.loc[df[self.encode_flag_column] != 1, :].reset_index(drop=True)
+            #return df.loc[df[self.encode_flag_column] != 1, :].reset_index(drop=True) #TODO: make this parameter-depen.
+            return df
         else:
             return df
 
@@ -1109,6 +1118,39 @@ class DfRandomImputer(BaseEstimator, TransformerMixin):
         return df
 
 
+# Random Imputer
+class DfRandomImputer(BaseEstimator, TransformerMixin):
+    def __init__(self, features, df_ref=None):
+        self.features = features
+        self.df_ref = df_ref
+
+    def fit(self, df, y=None):
+        if self.df_ref is None:
+            self.df_ref = df
+        return self
+
+    def transform(self, df=None, y=None):
+        #pdb.set_trace()
+        if len(self.features):
+            # for feature in self.features:
+            #     if df[feature].isnull().any():
+            #         df[feature] = np.where(np.isnan(df[feature]),
+            #                                self.df_ref[feature]
+            #                                .dropna()
+            #                                .sample(n=len(df[feature]), replace=True,
+            #                                        random_state=np.where(feature == self.features)[0][0]),
+            #                                df[feature])
+            df[self.features] = df[self.features].apply(lambda x:
+                                                        np.where(np.isnan(x),
+                                                                 self.df_ref[x.name]
+                                                                 .dropna()
+                                                                 .sample(n=len(x), replace=True,
+                                                                         random_state=
+                                                                         np.where(x.name == self.features)[0][0]),
+                                                                 x))
+        return df
+
+
 # Convert
 class Convert(BaseEstimator, TransformerMixin):
     def __init__(self, features, convert_to):
@@ -1124,6 +1166,75 @@ class Convert(BaseEstimator, TransformerMixin):
             if self.convert_to == "str":
                 df[self.features] = df[self.features].replace("nan", np.nan)
         return df
+
+
+# Winsorize
+class Winsorize(BaseEstimator, TransformerMixin):
+    def __init__(self, features, fresh=False, lower_quantile=None, upper_quantile=None):
+        self.features = features
+        self.fresh = fresh
+        self.lower_quantile = lower_quantile
+        self.upper_quantile = upper_quantile
+        self._d_lower = None
+        self._d_upper = None
+
+    def fit(self, df, y=None):
+        if not self.fresh:
+            if self.lower_quantile is not None:
+                self._d_lower = df[self.features].quantile(self.lower_quantile).to_dict()
+            if self.upper_quantile is not None:
+                self._d_upper = df[self.features].quantile(self.upper_quantile).to_dict()
+        return self
+
+    def transform(self, df):
+        if self.fresh:
+            if self.lower_quantile is not None:
+                self._d_lower = df[self.features].quantile(self.lower_quantile).to_dict()
+            if self.upper_quantile is not None:
+                self._d_upper = df[self.features].quantile(self.upper_quantile).to_dict()
+        if self.lower_quantile is not None:
+            df[self.features] = df[self.features].apply(lambda x: x.clip(lower=self._d_lower[x.name]))
+        if self.upper_quantile is not None:
+            df[self.features] = df[self.features].apply(lambda x: x.clip(upper=self._d_upper[x.name]))
+        return df
+
+
+# Zscale
+class Zscale(BaseEstimator, TransformerMixin):
+    def __init__(self, features, fresh=False):
+        self.features = features
+        self.fresh = fresh
+        self._d_mean = None
+        self._d_std = None
+
+    def fit(self, df, y=None):
+        if not self.fresh:
+            self._d_mean = df[self.features].mean().to_dict()
+            self._d_std = df[self.features].std().to_dict()
+        return self
+
+    def transform(self, df):
+        if self.fresh:
+            self._d_mean = df[self.features].mean().to_dict()
+            self._d_std = df[self.features].std().to_dict()
+        df[self.features] = df[self.features].apply(lambda x: (x - self._d_mean[x.name]) / self._d_std[x.name])
+        return df
+
+
+# Binning: TODO: Save borders and apply in transform
+class Binning(BaseEstimator, TransformerMixin):
+    def __init__(self, features):
+        self.features = features
+        self.fresh = True
+
+    def fit(self, df, y=None):
+        return self
+
+    def transform(self, df):
+        #pdb.set_trace()
+        df[self.features] = df[self.features].apply(lambda x: char_bins(x))
+        return df
+
 
 # Undersample
 class Undersample(BaseEstimator, TransformerMixin):
