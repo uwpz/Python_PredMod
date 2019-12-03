@@ -51,7 +51,7 @@ import pickle
 
 # Silent plotting (Overwrite to get default: plt.ion();  matplotlib.use('TkAgg'))
 plt.ioff(); matplotlib.use('Agg')
-
+#plt.ion();  matplotlib.use('TkAgg')
 
 # ######################################################################################################################
 # Parameters
@@ -62,7 +62,7 @@ dataloc = "./data/"
 plotloc = "./output/"
 
 # Util
-sns.set(style="white")
+sns.set(style="whitegrid")
 pd.set_option('display.width', 320)
 pd.set_option('display.max_columns', 20)
 
@@ -84,9 +84,9 @@ def setdiff(a, b):
     return np.setdiff1d(a, b, True)
 
 
-def char_bins(series, n_bins=10):
+def char_bins(series, n_bins=10, prefix="q"):
     bins = pd.qcut(series, n_bins, duplicates="drop")
-    bins.cat.categories = ["q" + str(i).zfill(2)  # + ":" + bins.cat.categories.astype("str")[i-1]
+    bins.cat.categories = [prefix + str(i).zfill(2)  # + ":" + bins.cat.categories.astype("str")[i-1]
                            for i in 1 + np.arange(len(bins.cat.categories))]
     bins = bins.astype("str").replace("nan", np.nan)
     return bins
@@ -101,9 +101,11 @@ def rmse(y_true, y_pred):
     rmse = np.sqrt(np.mean(np.power(y_true - y_pred, 2)))
     return rmse
 
+
 def auc(y_true, y_pred):
     auc = roc_auc_score(y_true, y_pred)
     return auc
+
 
 def acc(y_true, y_pred):
     acc = accuracy_score(y_true, np.where(y_pred > 0.5, 1, 0))
@@ -130,186 +132,242 @@ def show_figure(fig):
 def plot_distr(df, features, target="target", target_type="CLASS",
                varimp=None, color=["blue", "red"], ylim=None, regplot=True, min_width=0,
                nrow=1, ncol=1, w=8, h=6, pdf=None):
-    # df = df_test; features = cate; target = "residual"; target_type="REGR"; color=["blue", "red"]; varimp=None;
-    # ylim = ylim_res; ncol=2; nrow=2; pdf=None; w=8; h=6
+    # df = df; features = cate; target = "target"; target_type="MULTICLASS"; color=threecol; varimp=None; min_width=0
+    # ylim = ylim; ncol=3; nrow=3; pdf=None; w=8; h=6
 
     # Help variables
     n_ppp = ncol * nrow  # plots per page
-    n_pages = len(features) // n_ppp + 1  # number of pages
-    pdf_pages = None
 
     # Open pdf
     if pdf is not None:
         pdf_pages = PdfPages(pdf)
+    else:
+        pdf_pages = None
 
-    # Plot
-    # l_fig = list()
-    for page in range(n_pages):
-        # page = 0
-        fig, ax = plt.subplots(nrow, ncol)
-        for i in range(n_ppp):
-            # i = 1
-            if nrow*ncol == 1:
-                ax_act = ax
-            else:
-                ax_act = ax.flat[i]
-            if page * n_ppp + i <= max(range(len(features))):
-                feature_act = features[page * n_ppp + i]
+    # Plot (loop over features)
+    for i, feature_act in enumerate(features):
+        #i=0; feature_act=features[i]
 
-                # Categorical feature
-                if df[feature_act].dtype == "object":
-                    # Prepare data
-                   # pdb.set_trace()
-                    df_plot = pd.DataFrame({"h": df.groupby(feature_act)[target].mean(),
-                                            "w": df.groupby(feature_act).size()}).reset_index()
-                    df_plot["pct"] = 100 * df_plot["w"] / len(df)
-                    df_plot["w"] = 0.9 * df_plot["w"] / max(df_plot["w"])
-                    df_plot[feature_act + "_new"] = df_plot[feature_act] + " (" + \
-                                                    (df_plot["pct"]).round(1).astype(str) + "%)"
-                    df_plot["new_w"] = np.where(df_plot["w"].values < min_width, min_width, df_plot["w"])
-                    if target_type == "CLASS":
-                        # Target barplot
-                        # sns.barplot(df_tmp.h, df_tmp[cate[page * ppp + i]], orient="h", color="coral", ax=axact)
-                        ax_act.barh(df_plot[feature_act], df_plot.h, height=df_plot.new_w,
-                                    color=color[1], edgecolor="black", alpha=0.5, linewidth=1)
-                        ax_act.set_xlabel("mean(" + target + ")")
-                    if target_type == "REGR":
-                        if ylim is not None:
-                            ax_act.set_xlim(ylim)
+        # Start new subplot on new page
+        if i % n_ppp == 0:
+            fig, ax = plt.subplots(nrow, ncol)
+            fig.set_size_inches(w=w, h=h)
+            i_ax = 0
 
-                        # Target boxplot
-                        bp = df[[feature_act, target]].boxplot(target, feature_act, vert=False,
-                                                                        widths=df_plot.w.values,
-                                                                        showmeans=True,
-                                                                        meanprops=dict(marker="x",
-                                                                                       markeredgecolor="black"),
-                                                                        flierprops=dict(marker="."),
-                                                                        return_type='dict',
-                                                                        ax=ax_act)
-                        [[item.set_color('black') for item in bp[target][key]] for key in bp[target].keys()]
-                        fig.suptitle("")
-                        ax_act.set_xlabel(target)
-                    ax_act.set_yticklabels(df_plot[feature_act + "_new"].values)
-                    if varimp is not None:
-                        ax_act.set_title(feature_act + " (VI: " + str(varimp[feature_act]) + ")")
-                    else:
-                        ax_act.set_title(feature_act)
-                    ax_act.axvline(np.mean(df[target]), ls="dotted", color="black")
+        # Catch single plot
+        if n_ppp == 1:
+            ax_act = ax
+        else:
+            ax_act = ax.flat[i_ax]
 
-                    # Inner barplot
-                    xlim = ax_act.get_xlim()
-                    ax_act.set_xlim(xlim[0] - 0.3 * (xlim[1] - xlim[0]))
-                    inset_ax = ax_act.inset_axes([0, 0, 0.2, 1])
-                    inset_ax.set_axis_off()
+        # Distinguish first by target_type ...
+        if target_type in ["CLASS", "MULTICLASS"]:
 
-                    if target_type == "CLASS":
-                        ax_act.axvline(0, color="black")
-                        #inset_ax.set_yticklabels(df_plot[feature_act + "_new"].values)
-                        ax_act.get_shared_y_axes().join(ax_act, inset_ax)
-                        inset_ax.barh(df_plot[feature_act], df_plot.w,
-                                      color="lightgrey", edgecolor="black", linewidth=1)
-                    if target_type == "REGR":
-                        if ylim is not None:
-                            ax_act.axvline(ylim[0], color="black")
-                        df_plot.plot.barh(y="w", x=feature_act,
-                                          color="lightgrey", ax=inset_ax, edgecolor="black", linewidth=1, legend=False)
-                        # inset_ax.barh(df_plot[feature_act], df_plot.w, color="lightgrey", edgecolor="black",
-                        #              linewidth=1)
+            # ... then by feature type (metric features)
+            if df[feature_act].dtype != "object":
 
-                # Metric feature
+                # Main distribution plot (overlayed)
+                members = np.sort(df[target].unique())
+                for m, member in enumerate(members):
+                    sns.distplot(df.loc[df[target] == member, feature_act].dropna(), color=color[m],
+                                 bins=20, label=member, ax=ax_act)
+                if varimp is not None:
+                    ax_act.set_title(feature_act + " (VI: " + str(varimp[feature_act]) + ")")
                 else:
-                    if target_type == "CLASS":
-                        sns.distplot(df.loc[df[target] == 0, feature_act].dropna(), color=color[0],
-                                     bins=20, label="0", ax=ax_act)
-                        sns.distplot(df.loc[df[target] == 1, feature_act].dropna(), color=color[1],
-                                     bins=20, label="1", ax=ax_act)
-                        # sns.FacetGrid(df, hue=target, palette=["red","blue"])\
-                        #     .map(sns.distplot, metr[i])\
-                        #     .add_legend() # does not work for multiple axes
-                        if varimp is not None:
-                            ax_act.set_title(feature_act + " (VI: " + str(varimp[feature_act]) + ")")
-                        else:
-                            ax_act.set_title(feature_act)
-                        ax_act.set_ylabel("density")
-                        ax_act.set_xlabel(feature_act + " (NA: " +
-                                          str((df[feature_act].isnull().mean() * 100).round(1)) +
-                                          "%)")
+                    ax_act.set_title(feature_act)
+                ax_act.set_ylabel("density")
+                ax_act.set_xlabel(feature_act + " (NA: " +
+                                  str((df[feature_act].isnull().mean() * 100).round(1)) +
+                                  "%)")
+                ax_act.legend(title=target, loc="best")
 
-                        # Inner Boxplot
-                        ylim = ax_act.get_ylim()
-                        ax_act.set_ylim(ylim[0] - 0.3 * (ylim[1] - ylim[0]))
-                        inset_ax = ax_act.inset_axes([0, 0, 1, 0.2])
-                        inset_ax.set_axis_off()
-                        ax_act.get_shared_x_axes().join(ax_act, inset_ax)
-                        i_bool = df[feature_act].notnull()
-                        sns.boxplot(x=df.loc[i_bool, feature_act],
-                                    y=df.loc[i_bool, target].astype("category"),
-                                    showmeans=True,
-                                    meanprops={"marker": "x", "markerfacecolor": "black", "markeredgecolor":"black"},
-                                    palette=color,
-                                    ax=inset_ax)
-                        ax_act.legend(title=target, loc="best")
+                # Inner Boxplot
+                ylim = ax_act.get_ylim()
+                ax_act.set_ylim(ylim[0] - 0.3 * (ylim[1] - ylim[0]))
+                inset_ax = ax_act.inset_axes([0, 0, 1, 0.2])
+                inset_ax.set_axis_off()
+                ax_act.get_shared_x_axes().join(ax_act, inset_ax)
+                i_bool = df[feature_act].notnull()
+                sns.boxplot(x=df.loc[i_bool, feature_act],
+                            y=df.loc[i_bool, target].astype("category"),
+                            showmeans=True,
+                            meanprops={"marker": "x", "markerfacecolor": "black", "markeredgecolor": "black"},
+                            palette=color,
+                            ax=inset_ax)
 
-                    if target_type == "REGR":
-                        if ylim is not None:
-                            ax_act.set_ylim(ylim)
-                            tmp_scale = (ylim[1] - ylim[0]) / (np.max(df[target]) - np.min(df[target]))
-                        else:
-                            tmp_scale = 1
-                        tmp_cmap = mcolors.LinearSegmentedColormap.from_list("gr_bl_yl_rd",
-                                                                            [(0.5, 0.5, 0.5, 0), "blue", "yellow",
-                                                                             "red"])
-                        ax_act.set_facecolor('0.98')
-                        p = ax_act.hexbin(df[feature_act], df[target],
-                                          gridsize=(int(50 * tmp_scale), 50),
-                                          cmap=tmp_cmap)
-                        plt.colorbar(p, ax=ax_act)
-                        if regplot == True:
-                            sns.regplot(feature_act, target, df, lowess=True, scatter=False, color="black", ax=ax_act)
-                        if varimp is not None:
-                            ax_act.set_title(feature_act + " (VI: " + str(varimp[feature_act]) + ")")
-                        else:
-                            ax_act.set_title(feature_act)
-                        ax_act.set_ylabel(target)
-                        ax_act.set_xlabel(feature_act + " (NA: " +
-                                          str(df[feature_act].isnull().mean().round(3) * 100) +
-                                          "%)")
-                        ylim = ax_act.get_ylim()
-                        # ax_act.grid(False)
-                        ax_act.axhline(color="grey")
-
-                        # Inner Histogram
-                        ax_act.set_ylim(ylim[0] - 0.4 * (ylim[1] - ylim[0]))
-                        inset_ax = ax_act.inset_axes([0, 0.07, 1, 0.2])
-                        inset_ax.set_axis_off()
-                        inset_ax.get_yaxis().set_visible(False)
-                        ax_act.get_shared_x_axes().join(ax_act, inset_ax)
-                        i_bool = df[feature_act].notnull()
-                        sns.distplot(df[feature_act].dropna(), bins=20, color="black", ax=inset_ax)
-                        inset_ax.set_xlabel("")
-
-                        # Inner-inner Boxplot
-                        #ylim_inner = inset_ax.get_ylim()
-                        #inset_ax.set_ylim(ylim_inner[0] - 0.35 * (ylim_inner[1] - ylim_inner[0]))
-                        inset_ax = ax_act.inset_axes([0, 0.01, 1, 0.05])
-                        inset_ax.set_axis_off()
-                        inset_ax.get_shared_x_axes().join(ax_act, inset_ax)
-                        sns.boxplot(x=df.loc[i_bool, feature_act], palette=["grey"], ax=inset_ax)
-                        #inset_ax.set_xlabel("")
-                        inset_ax.set_xlabel(feature_act + " (NA: " +
-                                          str(df[feature_act].isnull().mean().round(3) * 100) +
-                                          "%)")
-                        # plt.show()
+            # Categorical feature
             else:
-                ax_act.axis("off")  # Remove left-over plots
-        # plt.subplots_adjust(wspace=1)
-        fig.set_size_inches(w=w, h=h)
-        fig.tight_layout()
-        # l_fig.append(fig)
-        if pdf is not None:
+                #pdb.set_trace()
+                # Prepare data
+                # df_plot = pd.DataFrame({"h": df.groupby(feature_act)[target].mean(),
+                #                         "w": df.groupby(feature_act).size()}).reset_index()
+                # df_plot = df.groupby(feature_act)[target].agg(h="mean", w="size").reset_index()
+                # df_plot["pct"] = 100 * df_plot["w"] / len(df)
+                # df_plot["w"] = 0.9 * df_plot["w"] / max(df_plot["w"])
+                # df_plot[feature_act + "_new"] = df_plot[feature_act] + " (" + \
+                #                                 (df_plot["pct"]).round(1).astype(str) + "%)"
+                # df_plot["new_w"] = np.where(df_plot["w"].values < min_width, min_width, df_plot["w"])
+
+
+                df_hlp = pd.crosstab(df[feature_act], df[target])
+                df_plot = df_hlp.div(df_hlp.sum(axis=1), axis=0)
+                df_plot["w"] = df_hlp.sum(axis=1)
+                df_plot = df_plot.reset_index()
+                df_plot["pct"] = 100 * df_plot["w"] / len(df)
+                df_plot["w"] = 0.9 * df_plot["w"] / max(df_plot["w"])
+                df_plot[feature_act + "_new"] = df_plot[feature_act] + " (" + \
+                                                (df_plot["pct"]).round(1).astype(str) + "%)"
+                df_plot["new_w"] = np.where(df_plot["w"].values < min_width, min_width, df_plot["w"])
+
+                #pdb.set_trace()
+                # Main barplot
+                if target_type == "MULTICLASS":
+                    offset = np.zeros(len(df_plot))
+                    for m, member in enumerate(np.sort(df[target].unique())):
+                        ax_act.barh(df_plot[feature_act + "_new"], df_plot[member], height=df_plot.new_w, left=offset,
+                                    color=color[m], label=member, edgecolor="black", alpha=0.5, linewidth=1)
+                        offset = offset + df_plot[member].values
+                    ax_act.legend(title=target, loc="center left", bbox_to_anchor=(1, 0.5))
+
+                else:
+                    ax_act.barh(df_plot[feature_act + "_new"], df_plot[1], height=df_plot.new_w,
+                                color=color[1], edgecolor="black", alpha=0.5, linewidth=1)
+                ax_act.set_xlabel("mean(" + target + ")")
+                #ax_act.set_yticklabels(df_plot[feature_act + "_new"].values)
+                #ax_act.set_yticklabels(df_plot[feature_act].values)
+                if varimp is not None:
+                    ax_act.set_title(feature_act + " (VI: " + str(varimp[feature_act]) + ")")
+                else:
+                    ax_act.set_title(feature_act)
+                if target_type == "CLASS":
+                    ax_act.axvline(np.mean(df[target]), ls="dotted", color="black")  # priori line
+
+                # Inner barplot
+                xlim = ax_act.get_xlim()
+                ax_act.set_xlim(xlim[0] - 0.3 * (xlim[1] - xlim[0]))
+                inset_ax = ax_act.inset_axes([0, 0, 0.2, 1])
+                inset_ax.set_axis_off()
+                ax_act.axvline(0, color="black")  # separation line
+                # inset_ax.set_yticklabels(df_plot[feature_act + "_new"].values)
+                ax_act.get_shared_y_axes().join(ax_act, inset_ax)
+                inset_ax.barh(df_plot[feature_act + "_new"], df_plot.w,
+                              color="lightgrey", edgecolor="black", linewidth=1)
+
+        if target_type == "REGR":
+
+            # Metric feature
+            if df[feature_act].dtype != "object":
+
+                # Main Heatmap
+
+                # Calc scale
+                if ylim is not None:
+                    ax_act.set_ylim(ylim)
+                    tmp_scale = (ylim[1] - ylim[0]) / (np.max(df[target]) - np.min(df[target]))
+                else:
+                    tmp_scale = 1
+
+                # Calc colormap
+                tmp_cmap = mcolors.LinearSegmentedColormap.from_list("gr_bl_yl_rd",
+                                                                     [(0.5, 0.5, 0.5, 0), "blue", "yellow",
+                                                                      "red"])
+                # Hexbin plot
+                ax_act.set_facecolor('0.98')
+                p = ax_act.hexbin(df[feature_act], df[target],
+                                  gridsize=(int(50 * tmp_scale), 50),
+                                  cmap=tmp_cmap)
+                plt.colorbar(p, ax=ax_act)
+                if varimp is not None:
+                    ax_act.set_title(feature_act + " (VI: " + str(varimp[feature_act]) + ")")
+                else:
+                    ax_act.set_title(feature_act)
+                ax_act.set_ylabel(target)
+                ax_act.set_xlabel(feature_act + " (NA: " +
+                                  str(df[feature_act].isnull().mean().round(3) * 100) +
+                                  "%)")
+                ylim = ax_act.get_ylim()
+                # ax_act.grid(False)
+                ax_act.axhline(color="grey")
+
+                # Add lowess regression line?
+                if regplot:
+                    sns.regplot(feature_act, target, df, lowess=True, scatter=False, color="black", ax=ax_act)
+
+                # Inner Histogram
+                ax_act.set_ylim(ylim[0] - 0.4 * (ylim[1] - ylim[0]))
+                inset_ax = ax_act.inset_axes([0, 0.07, 1, 0.2])
+                inset_ax.set_axis_off()
+                inset_ax.get_yaxis().set_visible(False)
+                ax_act.get_shared_x_axes().join(ax_act, inset_ax)
+                i_bool = df[feature_act].notnull()
+                sns.distplot(df[feature_act].dropna(), bins=20, color="black", ax=inset_ax)
+                inset_ax.set_xlabel("")
+
+                # Inner-inner Boxplot
+                inset_ax = ax_act.inset_axes([0, 0.01, 1, 0.05])
+                # ylim_inner = inset_ax.get_ylim()
+                # inset_ax.set_ylim(ylim_inner[0] - 0.35 * (ylim_inner[1] - ylim_inner[0]))
+                inset_ax.set_axis_off()
+                inset_ax.get_shared_x_axes().join(ax_act, inset_ax)
+                sns.boxplot(x=df.loc[i_bool, feature_act], palette=["grey"], ax=inset_ax)
+                # inset_ax.set_xlabel("")
+                inset_ax.set_xlabel(feature_act + " (NA: " +
+                                    str(df[feature_act].isnull().mean().round(3) * 100) +
+                                    "%)")
+
+            # Categorical feature
+            else:
+                # Prepare data (Same as for CLASS target)
+                df_plot = pd.DataFrame({"h": df.groupby(feature_act)[target].mean(),
+                                        "w": df.groupby(feature_act).size()}).reset_index()
+                df_plot["pct"] = 100 * df_plot["w"] / len(df)
+                df_plot["w"] = 0.9 * df_plot["w"] / max(df_plot["w"])
+                df_plot[feature_act + "_new"] = df_plot[feature_act] + " (" + \
+                                                (df_plot["pct"]).round(1).astype(str) + "%)"
+                df_plot["new_w"] = np.where(df_plot["w"].values < min_width, min_width, df_plot["w"])
+
+                # Main grouped boxplot
+                if ylim is not None:
+                    ax_act.set_xlim(ylim)
+                bp = df[[feature_act, target]].boxplot(target, feature_act, vert=False,
+                                                       widths=df_plot.w.values,
+                                                       showmeans=True,
+                                                       meanprops=dict(marker="x",
+                                                                      markeredgecolor="black"),
+                                                       flierprops=dict(marker="."),
+                                                       return_type='dict',
+                                                       ax=ax_act)
+                [[item.set_color('black') for item in bp[target][key]] for key in bp[target].keys()]
+                fig.suptitle("")
+                ax_act.set_xlabel(target)
+                ax_act.set_yticklabels(df_plot[feature_act + "_new"].values)
+                if varimp is not None:
+                    ax_act.set_title(feature_act + " (VI: " + str(varimp[feature_act]) + ")")
+                else:
+                    ax_act.set_title(feature_act)
+                ax_act.axvline(np.mean(df[target]), ls="dotted", color="black")
+
+                # Inner barplot
+                xlim = ax_act.get_xlim()
+                ax_act.set_xlim(xlim[0] - 0.3 * (xlim[1] - xlim[0]))
+                inset_ax = ax_act.inset_axes([0, 0, 0.2, 1])
+                inset_ax.set_axis_off()
+                if ylim is not None:
+                    ax_act.axvline(ylim[0], color="black")
+                df_plot.plot.barh(y="w", x=feature_act,
+                                  color="lightgrey", ax=inset_ax, edgecolor="black", linewidth=1, legend=False)
+                # inset_ax.barh(df_plot[feature_act], df_plot.w, color="lightgrey", edgecolor="black",
+                #              linewidth=1)
+
+        i_ax += 1
+
+        if i_ax == n_ppp or i == len(features)-1:
+            if i == len(features)-1:
+                for k in range(i_ax, nrow*ncol):
+                    ax.flat[k].axis("off")
+            fig.tight_layout()
             pdf_pages.savefig(fig)
-            # plt.close(fig)
-        #plt.show()
+
     if pdf is not None:
         pdf_pages.close()
 
@@ -384,11 +442,11 @@ def plot_corr(df, features, cutoff=0, n_cluster=5, w=8, h=6, pdf=None):
 
 # Univariate variable importance
 def calc_imp(df, features, target="target", target_type="CLASS"):
-    # df=df; features=metr; target="target"; target_type="CLASS"
+    # df=df; features=metr; target="target"; target_type="MULTICLASS"
     #pdb.set_trace()
     varimp = pd.Series()
     for feature_act in features:
-        # feature_act=metr[8]
+        # feature_act=metr[0]
         if target_type == "CLASS":
             if df[feature_act].dtype == "object":
                 varimp_act = {feature_act: (roc_auc_score(y_true=df[target].values,
@@ -407,6 +465,31 @@ def calc_imp(df, features, target="target", target_type="CLASS"):
                                                               .groupby("dummy")[target]
                                                               .transform("mean").values)
                                                 .round(3))}
+                except:
+                    varimp_act = {feature_act: 0.5}
+
+        if target_type == "MULTICLASS":
+            if df[feature_act].dtype == "object":
+                varimp_act = {feature_act: np.mean(list(
+                    map(lambda x: roc_auc_score(y_true=np.where(df[target] == x, 1, 0),
+                                                y_score=(df[[feature_act]]
+                                                         .assign(target=np.where(df[target] == x, 1, 0))
+                                                         .groupby(feature_act)[target]
+                                                         .transform("mean").values).round(3)),
+                        df[target].unique())))}
+
+            else:
+                try:
+                    varimp_act = {feature_act: np.mean(list(
+                        map(lambda x: roc_auc_score(y_true=np.where(df[target] == x, 1, 0),
+                                                    y_score=(pd.DataFrame(dict(target=np.where(df[target] == x, 1, 0)))
+                                                             .assign(dummy=pd.qcut(df[feature_act], 10,
+                                                                                   duplicates="drop")
+                                                                     .astype("object")
+                                                                     .fillna("(Missing)"))
+                                                             .groupby("dummy")["target"]
+                                                             .transform("mean").values)).round(3),
+                            df[target].unique())))}
                 except:
                     varimp_act = {feature_act: 0.5}
 
@@ -440,6 +523,7 @@ def scale_predictions(yhat, b_sample=None, b_all=None):
     if b_sample is None:
         yhat_rescaled = yhat
     else:
+   #     pdb.set_trace()
         tmp = yhat * np.array([1 - b_all, b_all]) / np.array([1 - b_sample, b_sample])
         yhat_rescaled = (tmp.T / tmp.sum(axis=1)).T
     return yhat_rescaled

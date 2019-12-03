@@ -10,9 +10,6 @@ from initialize import *
 # Specific libraries
 #
 
-# Silent plotting
-plt.ioff(); matplotlib.use('Agg')
-
 # Main parameter
 TARGET_TYPE = "REGR"
 
@@ -21,11 +18,13 @@ ylim = None
 cutoff_corr = 0.1
 cutoff_varimp = 0.52
 color = twocol
+min_width = 0
 if TARGET_TYPE == "MULTICLASS":
     ylim = None
     cutoff_corr = 0.1
     cutoff_varimp = 0.52
     color = threecol
+    min_width = 0.2
 if TARGET_TYPE == "REGR":
     ylim = (0, 250e3)
     cutoff_corr = 0.8
@@ -102,7 +101,7 @@ if TARGET_TYPE == "CLASS":
 if TARGET_TYPE == "REGR":
     df["target"] = df["SalePrice"]
 if TARGET_TYPE == "MULTICLASS":
-    df["target"] = "Cat_" + pd.qcut(df["SalePrice"], [0, 0.3, 0.95, 1]).astype("str")
+    df["target"] = char_bins(df["SalePrice"], n_bins=3, prefix="Cat_")
 df["target"].describe()
 
 # Train/Test fold: usually split by time
@@ -152,10 +151,9 @@ metr = setdiff(metr, remove)  # adapt metadata
 
 # Check for outliers and skewness
 df[metr].describe()
-if TARGET_TYPE in ["CLASS", "REGR"]:
-    plot_distr(df, metr, target_type=TARGET_TYPE,
-               color=color, ylim=ylim,
-               ncol=4, nrow=2, w=18, h=12, pdf=plotloc + TARGET_TYPE + "_distr_metr.pdf")
+plot_distr(df, metr, target_type=TARGET_TYPE,
+           color=color, ylim=ylim,
+           ncol=4, nrow=2, w=18, h=12, pdf=plotloc + TARGET_TYPE + "_distr_metr.pdf")
 
 # Winsorize (hint: plot again before deciding for log-trafo)
 df = Winsorize(features=metr, lower_quantile=0.02, upper_quantile=0.98).fit_transform(df)
@@ -173,17 +171,14 @@ df.rename(columns=dict(zip(tolog + "_BINNED", tolog + "_LOG_" + "_BINNED")), inp
 # --- Final variable information ------------------------------------------------------------------------------------
 
 # Univariate variable importance
-if TARGET_TYPE in ["REGR", "CLASS"]:
-    varimp_metr = calc_imp(df, np.append(metr, metr + "_BINNED"), target_type=TARGET_TYPE)
-    print(varimp_metr)
-else:
-    varimp_metr = None
+varimp_metr = calc_imp(df, np.append(metr, metr + "_BINNED"), target_type=TARGET_TYPE)
+print(varimp_metr)
+
 
 # Plot
-if TARGET_TYPE in ["REGR", "CLASS"]:
-    plot_distr(df, features=np.column_stack((metr, metr + "_BINNED")).ravel(), target_type=TARGET_TYPE,
-               varimp=varimp_metr, color=color, ylim=ylim,
-               ncol=4, nrow=2, w=18, h=12, pdf=plotloc + TARGET_TYPE + "_distr_metr_final.pdf")
+plot_distr(df, features=np.column_stack((metr, metr + "_BINNED")).ravel(), target_type=TARGET_TYPE,
+           varimp=varimp_metr, color=color, ylim=ylim,
+           ncol=4, nrow=2, w=18, h=12, pdf=plotloc + TARGET_TYPE + "_distr_metr_final.pdf")
 
 
 # --- Removing variables -------------------------------------------------------------------------------------------
@@ -279,10 +274,9 @@ else:
     varimp_cate = None
 
 # Check
-if TARGET_TYPE in ["REGR", "CLASS"]:
-    plot_distr(df, np.append(cate, ["MISS_" + miss]), target_type=TARGET_TYPE,
-               varimp=varimp_cate, color=color, ylim=ylim,
-               nrow=2, ncol=3, w=18, h=12, pdf=plotloc + TARGET_TYPE + "_distr_cate.pdf")  # maybe plot miss separately
+plot_distr(df, np.append(cate, ["MISS_" + miss]), target_type=TARGET_TYPE,
+           varimp=varimp_cate, color=color, ylim=ylim, min_width=min_width,
+           nrow=2, ncol=3, w=18, h=12, pdf=plotloc + TARGET_TYPE + "_distr_cate.pdf")  # maybe plot miss separately
 
 
 # --- Removing variables ---------------------------------------------------------------------------------------------
