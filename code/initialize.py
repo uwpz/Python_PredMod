@@ -27,8 +27,7 @@ from sklearn.preprocessing import *
 from sklearn.calibration import calibration_curve
 from sklearn.base import BaseEstimator, TransformerMixin, ClassifierMixin, clone
 from sklearn.impute import SimpleImputer
-from sklearn.linear_model import ElasticNet, SGDClassifier, LogisticRegression
-from sklearn.neighbors.nearest_centroid import NearestCentroid
+from sklearn.linear_model import ElasticNet, SGDClassifier, SGDRegressor, LogisticRegression
 from sklearn.tree import DecisionTreeRegressor, plot_tree #, export_graphviz
 import xgboost as xgb
 from sklearn.model_selection import (KFold, RepeatedKFold, StratifiedKFold, RepeatedStratifiedKFold,
@@ -84,6 +83,13 @@ def setdiff(a, b):
     return np.setdiff1d(a, b, True)
 
 
+# Overview of values
+def create_values_df(df, topn):
+    return pd.concat([df[catname].value_counts()[:topn].reset_index().
+                     rename(columns={"index": catname, catname: catname + "_#"})
+                      for catname in df.dtypes.index.values[df.dtypes == "object"]], axis=1)
+
+
 def char_bins(series, n_bins=10, prefix="q"):
     bins = pd.qcut(series, n_bins, duplicates="drop")
     bins.cat.categories = [prefix + str(i).zfill(2)  # + ":" + bins.cat.categories.astype("str")[i-1]
@@ -103,20 +109,26 @@ def rmse(y_true, y_pred):
 
 
 def auc(y_true, y_pred):
-    auc = roc_auc_score(y_true, y_pred)
+    # pdb.set_trace()
+    auc = roc_auc_score(y_true, y_pred, multi_class="ovr")
     return auc
 
 
 def acc(y_true, y_pred):
-    acc = accuracy_score(y_true, np.where(y_pred > 0.5, 1, 0))
+    # pdb.set_trace()
+    acc = accuracy_score(y_true, y_pred)
     return acc
 
 
-# Overview of values 
-def create_values_df(df, topn):
-    return pd.concat([df[catname].value_counts()[:topn].reset_index().
-                     rename(columns={"index": catname, catname: catname + "_c"})
-                      for catname in df.select_dtypes(["object"]).columns.values], axis=1)
+# Rescale predictions (e.g. to rewind undersampling)
+def scale_predictions(yhat, b_sample=None, b_all=None):
+    if b_sample is None:
+        yhat_rescaled = yhat
+    else:
+        # tmp = yhat * np.array([1 - b_all, b_all]) / np.array([1 - b_sample, b_sample])
+        tmp = (yhat * b_all) / b_sample
+        yhat_rescaled = (tmp.T / tmp.sum(axis=1)).T  # transposing is needed for casting
+    return yhat_rescaled
 
 
 # Show closed figure again
@@ -154,7 +166,7 @@ def plot_distr(df, features, target="target", target_type="CLASS",
             fig.set_size_inches(w=w, h=h)
             i_ax = 0
 
-        # Catch single plot
+        # Catch single plot case
         if n_ppp == 1:
             ax_act = ax
         else:
@@ -361,31 +373,36 @@ def plot_distr(df, features, target="target", target_type="CLASS",
 
         i_ax += 1
 
+        # Write figures
         if i_ax == n_ppp or i == len(features)-1:
             if i == len(features)-1:
                 for k in range(i_ax, nrow*ncol):
+                    # Remove unused axes
                     ax.flat[k].axis("off")
             fig.tight_layout()
             pdf_pages.savefig(fig)
 
+    # Close pdf
     if pdf is not None:
         pdf_pages.close()
 
 
 # Plot correlation
-def plot_corr(df, features, cutoff=0, n_cluster=5, w=8, h=6, pdf=None):
+def plot_corr(df, features, type="contingency", cutoff=0, n_cluster=5, w=8, h=6, pdf=None):
     # df = df; features = cate; cutoff = 0; n_cluster=3; w=8; h=6; pdf="blub.pdf"
 
+    # Check for mixed types
     metr = features[df[features].dtypes != "object"]
     cate = features[df[features].dtypes == "object"]
-    df_corr = None
-
     if len(metr) and len(cate):
         raise Exception('Mixed dtypes')
         # return
 
+    # All categorical variables
     if len(cate):
-        df_corr = pd.DataFrame(np.ones([len(cate), len(cate)]), index=cate, columns=cate)
+        # Intialize matrix with zeros
+        df_corr = pd.DataFrame(np.zeros([len(cate), len(cate)]), index=cate, columns=cate)
+
         for i in range(len(cate)):
             print("cate=", cate[i])
             for j in range(i+1, len(cate)):
@@ -396,7 +413,12 @@ def plot_corr(df, features, cutoff=0, n_cluster=5, w=8, h=6, pdf=None):
                 chi2 = chi2_contingency(tmp)[0]
 
                 try:
-                    df_corr.iloc[i, j] = np.sqrt(chi2 / (n + chi2)) * np.sqrt(m / (m-1))
+                    if type == "contingency":
+                        df_corr.iloc[i, j] = np.sqrt(chi2 / (n + chi2)) * np.sqrt(m / (m-1))
+                    elif type == "cramersv":
+                        df_corr.iloc[i, j] = np.sqrt(chi2 / (n * (m-1)))
+                    else:
+                        df_corr.iloc[i, j] = None
                 except:
                     df_corr.iloc[i, j] = None
                 df_corr.iloc[j, i] = df_corr.iloc[i, j]
@@ -405,6 +427,7 @@ def plot_corr(df, features, cutoff=0, n_cluster=5, w=8, h=6, pdf=None):
                                df[df_corr.columns.values].nunique().astype("str").values + ")"))
         df_corr.rename(columns=d_new_names, index=d_new_names, inplace=True)
 
+    # All metric variables
     if len(metr):
         df_corr = abs(df[metr].corr(method="spearman"))
         d_new_names = dict(zip(df_corr.columns.values,
@@ -412,8 +435,7 @@ def plot_corr(df, features, cutoff=0, n_cluster=5, w=8, h=6, pdf=None):
                                (df[df_corr.columns.values].isnull().mean() * 100).round(1).astype("str").values + "%)"))
         df_corr.rename(columns=d_new_names, index=d_new_names, inplace=True)
 
-    # Cut off
-    np.fill_diagonal(df_corr.values, 0)
+    # Filter out rows or cols below cutoff
     i_bool = (df_corr.max(axis=1) > cutoff).values
     df_corr = df_corr.loc[i_bool, i_bool]
     np.fill_diagonal(df_corr.values, 1)
@@ -431,7 +453,10 @@ def plot_corr(df, features, cutoff=0, n_cluster=5, w=8, h=6, pdf=None):
     if len(metr):
         ax_act.set_title("Absolute spearman correlation (cutoff at " + str(cutoff) +")")
     if len(cate):
-        ax_act.set_title("Contingency coefficient (cutoff at " + str(cutoff) + ")")
+        if type == "contingency":
+            ax_act.set_title("Contingency coefficient (cutoff at " + str(cutoff) + ")")
+        if type == "cramersv":
+            ax_act.set_title("Cramer's V (cutoff at " + str(cutoff) + ")")
     fig.set_size_inches(w=w, h=h)
     fig.tight_layout()
     if pdf is not None:
@@ -442,92 +467,53 @@ def plot_corr(df, features, cutoff=0, n_cluster=5, w=8, h=6, pdf=None):
 
 # Univariate variable importance
 def calc_imp(df, features, target="target", target_type="CLASS"):
-    # df=df; features=metr; target="target"; target_type="MULTICLASS"
-    #pdb.set_trace()
+    #df=df; features=metr; target="target"; target_type="MULTICLASS"
     varimp = pd.Series()
     for feature_act in features:
-        # feature_act=metr[0]
+        # feature_act=cate[0]
         if target_type == "CLASS":
-            if df[feature_act].dtype == "object":
-                varimp_act = {feature_act: (roc_auc_score(y_true=df[target].values,
-                                                          y_score=df[[feature_act, target]]
-                                                          .groupby(feature_act)[target]
-                                                          .transform("mean").values)
-                                            .round(3))}
-            else:
-                try:
-                    varimp_act = {feature_act: (roc_auc_score(y_true=df[target].values,
-                                                              y_score=df[[target]]
-                                                              .assign(dummy=pd.qcut(df[feature_act], 10,
-                                                                                    duplicates="drop")
-                                                                      .astype("object")
-                                                                      .fillna("(Missing)"))
-                                                              .groupby("dummy")[target]
-                                                              .transform("mean").values)
-                                                .round(3))}
-                except:
-                    varimp_act = {feature_act: 0.5}
+            try:
+                y_true = df[target].values
+                if df[feature_act].dtype == "object":
+                    dummy = df[feature_act]
+                else:
+                    # Create bins from metric variable
+                    dummy = pd.qcut(df[feature_act], 10, duplicates="drop").astype("object").fillna("(Missing)")
+                y_score = df[[target]].groupby(dummy).transform("mean").values
+                varimp_act = {feature_act: roc_auc_score(y_true, y_score).round(3)}
+            except:
+                varimp_act = {feature_act: 0.5}
 
         if target_type == "MULTICLASS":
-            if df[feature_act].dtype == "object":
-                varimp_act = {feature_act: np.mean(list(
-                    map(lambda x: roc_auc_score(y_true=np.where(df[target] == x, 1, 0),
-                                                y_score=(df[[feature_act]]
-                                                         .assign(target=np.where(df[target] == x, 1, 0))
-                                                         .groupby(feature_act)[target]
-                                                         .transform("mean").values).round(3)),
-                        df[target].unique())))}
-
-            else:
-                try:
-                    varimp_act = {feature_act: np.mean(list(
-                        map(lambda x: roc_auc_score(y_true=np.where(df[target] == x, 1, 0),
-                                                    y_score=(pd.DataFrame(dict(target=np.where(df[target] == x, 1, 0)))
-                                                             .assign(dummy=pd.qcut(df[feature_act], 10,
-                                                                                   duplicates="drop")
-                                                                     .astype("object")
-                                                                     .fillna("(Missing)"))
-                                                             .groupby("dummy")["target"]
-                                                             .transform("mean").values)).round(3),
-                            df[target].unique())))}
-                except:
-                    varimp_act = {feature_act: 0.5}
+            # Similar to "CLASS" but now y_true and y_pred are matrices
+            try:
+                y_true = df[target].str.get_dummies()
+                if df[feature_act].dtype == "object":
+                    dummy = df[feature_act]
+                else:
+                    dummy = pd.qcut(df[feature_act], 10, duplicates="drop").astype("object").fillna("(Missing)")
+                tmp = pd.crosstab(dummy, df[target])
+                y_score = (pd.DataFrame(dummy).reset_index()
+                           .merge(tmp.div(tmp.sum(axis=1), axis=0).reset_index(), how="inner")
+                           .sort_values("index")
+                           .reset_index(drop=True)[y_true.columns.values])
+                varimp_act = {feature_act: roc_auc_score(y_true, y_score).round(3)}
+            except:
+                varimp_act = {feature_act: 0.5}
 
         if target_type == "REGR":
+            y_true = df[target]
             if df[feature_act].dtype == "object":
-                df_tmp = df[[feature_act, target]]\
-                    .assign(grouped_mean=lambda x: x.groupby(feature_act)[target].transform("mean"))
-                varimp_act = {feature_act: (abs(df_tmp[["grouped_mean", target]].corr(method="pearson").values[0, 1])
-                                            .round(3))}
+                y_score = df.groupby(feature_act)[target].transform("mean")
             else:
-                varimp_act = {feature_act: (abs(df[[feature_act, target]].corr(method="pearson").values[0, 1])
-                                            .round(3))}
+                y_score = df[feature_act]
+            varimp_act = {feature_act: (abs(pd.DataFrame({"y_true": y_true, "y_score": y_score})
+                                            .corr(method="spearman")
+                                            .values[0, 1]).round(3))}
 
         varimp = varimp.append(pd.Series(varimp_act))
     varimp.sort_values(ascending=False, inplace=True)
     return varimp
-
-
-# # Undersample
-# def undersample_n(df, n_max_per_level, target="target", random_state=42):
-#     b_all = df[target].mean()
-#     df = df.groupby(target).apply(lambda x: x.sample(min(n_max_per_level, x.shape[0]),
-#                                                      random_state=random_state)) \
-#         .reset_index(drop=True)
-#     b_sample = df[target].mean()
-#     return df, b_sample, b_all
-
-
-# Rescale predictions (e.g. to rewind undersampling)
-def scale_predictions(yhat, b_sample=None, b_all=None):
-    if b_sample is None:
-        yhat_rescaled = yhat
-    else:
-   #     pdb.set_trace()
-        tmp = yhat * np.array([1 - b_all, b_all]) / np.array([1 - b_sample, b_sample])
-        yhat_rescaled = (tmp.T / tmp.sum(axis=1)).T
-    return yhat_rescaled
-
 
 
 # Plot CV results
@@ -775,7 +761,7 @@ def plot_all_performances(y, yhat, labels=None, target_type="CLASS", regplot=Tru
                  'title': "Calibration"}
         ax_act.set(**props)
 
-        # Distribution
+        # Distribution with ...
         ax_act = ax[0, 2]
         sns.distplot(y, color="blue", label="y", ax=ax_act)
         sns.distplot(yhat, color="red", label=r"$\^y$", ax=ax_act)
@@ -783,6 +769,7 @@ def plot_all_performances(y, yhat, labels=None, target_type="CLASS", regplot=Tru
         ax_act.set_xlabel("")
         ax_act.set_title("Distribution")
 
+        # ... inner boyxplot
         ylim = ax_act.get_ylim()
         ax_act.set_ylim(ylim[0] - 0.3 * (ylim[1] - ylim[0]))
         inset_ax = ax_act.inset_axes([0, 0, 1, 0.2])
@@ -962,7 +949,6 @@ def plot_variable_importance(df_varimp, mask=None, w=18, h=12, pdf=None):
         fig.savefig(pdf)
 
 
-
 # Partial dependence
 def calc_partial_dependence(df, df_ref, fit,
                             target, metr, cate,
@@ -1129,9 +1115,14 @@ class TargetEncoding(BaseEstimator, TransformerMixin):
         self._statistics = None
 
     def fit(self, df, y=None):
+        if df[self.target].nunique() > 2:
+            # Take majority class in case of MULTICLASS target
+            df["tmp"] = np.where(df[self.target] == df[self.target].value_counts().values[0], 1, 0)
+        else:
+            df["tmp"]=df[self.target]
         self._d_map = {x: df.loc[df[self.encode_flag_column] == 1, :].reset_index(drop=True)
-                            .groupby(x, as_index=False)[self.target].agg("mean")
-                            .sort_values(self.target, ascending=False)
+                            .groupby(x, as_index=False)["tmp"].agg("mean")
+                            .sort_values("tmp", ascending=False)
                             .assign(rank=lambda x: np.arange(len(x)) + 1)
                             .set_index(x)
                             ["rank"]
@@ -1166,39 +1157,6 @@ class DfSimpleImputer(SimpleImputer):
     def transform(self, df):
         if len(self.features):
             df[self.features] = super().transform(df[self.features].values)
-        return df
-
-
-# Random Imputer
-class DfRandomImputer(BaseEstimator, TransformerMixin):
-    def __init__(self, features, df_ref=None):
-        self.features = features
-        self.df_ref = df_ref
-
-    def fit(self, df, y=None):
-        if self.df_ref is None:
-            self.df_ref = df
-        return self
-
-    def transform(self, df=None, y=None):
-        #pdb.set_trace()
-        if len(self.features):
-            # for feature in self.features:
-            #     if df[feature].isnull().any():
-            #         df[feature] = np.where(np.isnan(df[feature]),
-            #                                self.df_ref[feature]
-            #                                .dropna()
-            #                                .sample(n=len(df[feature]), replace=True,
-            #                                        random_state=np.where(feature == self.features)[0][0]),
-            #                                df[feature])
-            df[self.features] = df[self.features].apply(lambda x:
-                                                        np.where(np.isnan(x),
-                                                                 self.df_ref[x.name]
-                                                                 .dropna()
-                                                                 .sample(n=len(x), replace=True,
-                                                                         random_state=
-                                                                         np.where(x.name == self.features)[0][0]),
-                                                                 x))
         return df
 
 
@@ -1335,12 +1293,13 @@ class Undersample(BaseEstimator, TransformerMixin):
         return df
 
     def fit_transform(self, df, y=None, target="target"):
-        self.b_all = df[target].mean()
+        # pdb.set_trace()
+        self.b_all = df[target].value_counts().values / len(df)
         df = df.groupby(target).apply(lambda x: x.sample(min(self.n_max_per_level, x.shape[0]),
                                                          random_state=self.random_state)) \
             .reset_index(drop=True)\
             .sample(frac=1).reset_index(drop=True)
-        self.b_sample = df[target].mean()
+        self.b_sample = df[target].value_counts().values / len(df)
         return df
 
 
@@ -1404,15 +1363,15 @@ class CreateSparseMatrix(BaseEstimator, TransformerMixin):
             return np.hstack([m_metr, m_cate])
 
 
-# NearestCentroid fails in Classifier context
-class NearestCentroidClassifier(NearestCentroid):
-    def __init__(self, metric='euclidean', shrink_threshold=None):
-        super().__init__(metric=metric, shrink_threshold=shrink_threshold)
-
-    def predict_proba(self, X):
-        # pdb.set_trace()
-        tmp = self.predict(X)
-        return np.column_stack((tmp, tmp))
+# # NearestCentroid fails in Classifier context
+# class NearestCentroidClassifier(NearestCentroid):
+#     def __init__(self, metric='euclidean', shrink_threshold=None):
+#         super().__init__(metric=metric, shrink_threshold=shrink_threshold)
+#
+#     def predict_proba(self, X):
+#         # pdb.set_trace()
+#         tmp = self.predict(X)
+#         return np.column_stack((tmp, tmp))
 
 # # GLMNET Classifier: ONLY on Unix
 # class glmnetClassifier(BaseEstimator, ClassifierMixin):

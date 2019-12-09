@@ -5,13 +5,13 @@
 
 # General libraries, parameters and functions
 from initialize import *
-# import sys; sys.path.append(getcwd() + "\\code") #not needed if code is marked as "source" in pycharm
+#import sys; sys.path.append(getcwd() + "\\code") #not needed if code is marked as "source" in pycharm
 
 # Specific libraries
 #
 
 # Main parameter
-TARGET_TYPE = "REGR"
+TARGET_TYPE = "MULTICLASS"
 
 # Specific parameters (CLASS is default)
 ylim = None
@@ -178,7 +178,7 @@ print(varimp_metr)
 # Plot
 plot_distr(df, features=np.column_stack((metr, metr + "_BINNED")).ravel(), target_type=TARGET_TYPE,
            varimp=varimp_metr, color=color, ylim=ylim,
-           ncol=4, nrow=2, w=18, h=12, pdf=plotloc + TARGET_TYPE + "_distr_metr_final.pdf")
+           ncol=4, nrow=2, w=24, h=18, pdf=plotloc + TARGET_TYPE + "_distr_metr_final.pdf")
 
 
 # --- Removing variables -------------------------------------------------------------------------------------------
@@ -247,31 +247,23 @@ df[cate] = df[cate].fillna("(Missing)")
 df[cate].describe()
 
 # Get "too many members" columns and copy these for additional encoded features (for tree based models)
-if TARGET_TYPE in ["REGR", "CLASS"]:
-    topn_toomany = 10
-    levinfo = df[cate].nunique().sort_values(ascending=False)  # number of levels
-    print(levinfo)
-    toomany = levinfo[levinfo > topn_toomany].index.values
-    print(toomany)
-    toomany = setdiff(toomany, ["xxx", "xxx"])  # set exception for important variables
-else:
-    toomany = np.array([], dtype="object")
+topn_toomany = 10
+levinfo = df[cate].nunique().sort_values(ascending=False)  # number of levels
+print(levinfo)
+toomany = levinfo[levinfo > topn_toomany].index.values
+print(toomany)
+toomany = setdiff(toomany, ["xxx", "xxx"])  # set exception for important variables
 
 # Create encoded features (for tree based models), i.e. numeric representation
-if TARGET_TYPE in ["REGR", "CLASS"]:
-    df = TargetEncoding(features=cate, encode_flag_column="encode_flag", target="target").fit_transform(df)
+df = TargetEncoding(features=cate, encode_flag_column="encode_flag", target="target").fit_transform(df)
 df["MISS_" + miss + "_ENCODED"] = df["MISS_" + miss].apply(lambda x: x.map({"no_miss": 0, "miss": 1}))
 
 # Convert toomany features: lump levels and map missings to own level
-if TARGET_TYPE in ["REGR", "CLASS"]:
-    df = MapToomany(features=toomany, n_top=10).fit_transform(df)
+df = MapToomany(features=toomany, n_top=10).fit_transform(df)
 
 # Univariate variable importance
-if TARGET_TYPE in ["REGR", "CLASS"]:
-    varimp_cate = calc_imp(df, np.append(cate, ["MISS_" + miss]), target_type=TARGET_TYPE)
-    print(varimp_cate)
-else:
-    varimp_cate = None
+varimp_cate = calc_imp(df, np.append(cate, ["MISS_" + miss]), target_type=TARGET_TYPE)
+print(varimp_cate)
 
 # Check
 plot_distr(df, np.append(cate, ["MISS_" + miss]), target_type=TARGET_TYPE,
