@@ -8,28 +8,21 @@ from initialize import *
 
 # Specific libraries
 from sklearn.model_selection import GridSearchCV, cross_validate, ShuffleSplit, learning_curve
-from sklearn.metrics import make_scorer
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor  # , GradientBoostingClassifier
 from sklearn.linear_model import ElasticNet
 import xgboost as xgb
 import lightgbm as lgbm
 
 # Main parameter
-TARGET_TYPE = "MULTICLASS"
+TARGET_TYPE = "CLASS"
 
 # Specific parameters
 n_jobs = 4
+exec("scoring = scoring_" + TARGET_TYPE)
 if TARGET_TYPE in ["CLASS", "MULTICLASS"]:
-    scoring = {"auc": make_scorer(auc, greater_is_better=True, needs_proba=True),
-               "acc": make_scorer(acc, greater_is_better=True)}
     metric = "auc"  # metric for peformance comparison
-elif TARGET_TYPE == "REGR":
-    scoring = {"spear": make_scorer(spearman_loss_func, greater_is_better=True),
-               "rmse": make_scorer(rmse, greater_is_better=False)}
-    metric = "spear"
 else:
-    scoring = None
-    metric = None
+    metric = "spear"
 
 # Load results from exploration
 df = metr_standard = cate_standard = metr_binned = cate_binned = metr_encoded = cate_encoded = None
@@ -40,7 +33,7 @@ for key, val in d_pick.items():
 
 # Switch target to numeric in case of multiclass
 if TARGET_TYPE == "MULTICLASS":
-    df["target"] = LabelEncoder().fit_transform(df.target)
+    df["target"] = LabelEncoder().fit_transform(df["target"])
 
 
 # ######################################################################################################################
@@ -82,6 +75,10 @@ i_test
 '''
 
 
+
+from keras.models import Sequential
+from keras.layers import Dense
+from keras.wrappers.scikit_learn import KerasClassifier
 
 # --- Fits -----------------------------------------------------------------------------------------------------------
 
@@ -160,6 +157,10 @@ fit = GridSearchCV(lgbm.LGBMRegressor() if TARGET_TYPE == "REGR" else lgbm.LGBMC
          categorical_feature=[x for x in metr_encoded.tolist() if "_ENCODED" in x])
 plot_cvresult(fit.cv_results_, metric=metric,
               x_var="n_estimators", color_var="num_leaves", column_var="min_child_samples")
+
+
+# DeepNet
+# TODO
 
 
 # ######################################################################################################################

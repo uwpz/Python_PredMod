@@ -77,6 +77,8 @@ colors = colors.iloc[np.setdiff1d(np.arange(len(colors)),[6,7,8,9,12,13,14,15,16
 # My Functions and Classes
 # ######################################################################################################################
 
+
+
 # --- Functions ----------------------------------------------------------------------------------------
 
 def setdiff(a, b):
@@ -98,7 +100,7 @@ def char_bins(series, n_bins=10, prefix="q"):
     return bins
 
 
-def spearman_loss_func(y_true, y_pred):
+def spear(y_true, y_pred):
     spear = pd.DataFrame({"y_true": y_true, "y_pred": y_pred}).corr(method="spearman").values[0, 1]
     return spear
 
@@ -109,7 +111,10 @@ def rmse(y_true, y_pred):
 
 
 def auc(y_true, y_pred):
-    # pdb.set_trace()
+    #pdb.set_trace()
+    if y_pred.ndim == 2:
+        if y_pred.shape[1] == 2:
+            y_pred = y_pred[:, 1]
     auc = roc_auc_score(y_true, y_pred, multi_class="ovr")
     return auc
 
@@ -118,6 +123,15 @@ def acc(y_true, y_pred):
     # pdb.set_trace()
     acc = accuracy_score(y_true, y_pred)
     return acc
+
+
+# Scoring metrics
+scoring = {"CLASS": {"auc": make_scorer(auc, greater_is_better=True, needs_proba=True),
+                     "acc": make_scorer(acc, greater_is_better=True)},
+           "MULTICLASS": {"auc": make_scorer(auc, greater_is_better=True, needs_proba=True),
+                          "acc": make_scorer(acc, greater_is_better=True)},
+           "REGR": {"spear": make_scorer(spear, greater_is_better=True),
+                    "rmse": make_scorer(rmse, greater_is_better=False)}}
 
 
 # Rescale predictions (e.g. to rewind undersampling)
@@ -140,6 +154,55 @@ def show_figure(fig):
     fig.set_canvas(new_manager.canvas)
     
 
+# Univariate variable importance
+def calc_imp(df, features, target="target", target_type="CLASS"):
+    #df=df; features=metr; target="target"; target_type="MULTICLASS"
+    varimp = pd.Series()
+    for feature_act in features:
+        # feature_act=cate[0]
+        if target_type == "CLASS":
+            try:
+                y_true = df[target].values
+                if df[feature_act].dtype == "object":
+                    dummy = df[feature_act]
+                else:
+                    # Create bins from metric variable
+                    dummy = pd.qcut(df[feature_act], 10, duplicates="drop").astype("object").fillna("(Missing)")
+                y_score = df[[target]].groupby(dummy).transform("mean").values
+                varimp_act = {feature_act: roc_auc_score(y_true, y_score).round(3)}
+            except:
+                varimp_act = {feature_act: 0.5}
+
+        if target_type == "MULTICLASS":
+            # Similar to "CLASS" but now y_true and y_pred are matrices
+            try:
+                y_true = df[target].str.get_dummies()
+                if df[feature_act].dtype == "object":
+                    dummy = df[feature_act]
+                else:
+                    dummy = pd.qcut(df[feature_act], 10, duplicates="drop").astype("object").fillna("(Missing)")
+                tmp = pd.crosstab(dummy, df[target])
+                y_score = (pd.DataFrame(dummy).reset_index()
+                           .merge(tmp.div(tmp.sum(axis=1), axis=0).reset_index(), how="inner")
+                           .sort_values("index")
+                           .reset_index(drop=True)[y_true.columns.values])
+                varimp_act = {feature_act: roc_auc_score(y_true, y_score).round(3)}
+            except:
+                varimp_act = {feature_act: 0.5}
+
+        if target_type == "REGR":
+            y_true = df[target]
+            if df[feature_act].dtype == "object":
+                y_score = df.groupby(feature_act)[target].transform("mean")
+            else:
+                y_score = df[feature_act]
+            varimp_act = {feature_act: (abs(pd.DataFrame({"y_true": y_true, "y_score": y_score})
+                                            .corr(method="spearman")
+                                            .values[0, 1]).round(3))}
+
+        varimp = varimp.append(pd.Series(varimp_act))
+    varimp.sort_values(ascending=False, inplace=True)
+    return varimp
 # Plot distribution regarding target
 def plot_distr(df, features, target="target", target_type="CLASS",
                varimp=None, color=["blue", "red"], ylim=None, regplot=True, min_width=0,
@@ -465,55 +528,6 @@ def plot_corr(df, features, type="contingency", cutoff=0, n_cluster=5, w=8, h=6,
     plt.show()
 
 
-# Univariate variable importance
-def calc_imp(df, features, target="target", target_type="CLASS"):
-    #df=df; features=metr; target="target"; target_type="MULTICLASS"
-    varimp = pd.Series()
-    for feature_act in features:
-        # feature_act=cate[0]
-        if target_type == "CLASS":
-            try:
-                y_true = df[target].values
-                if df[feature_act].dtype == "object":
-                    dummy = df[feature_act]
-                else:
-                    # Create bins from metric variable
-                    dummy = pd.qcut(df[feature_act], 10, duplicates="drop").astype("object").fillna("(Missing)")
-                y_score = df[[target]].groupby(dummy).transform("mean").values
-                varimp_act = {feature_act: roc_auc_score(y_true, y_score).round(3)}
-            except:
-                varimp_act = {feature_act: 0.5}
-
-        if target_type == "MULTICLASS":
-            # Similar to "CLASS" but now y_true and y_pred are matrices
-            try:
-                y_true = df[target].str.get_dummies()
-                if df[feature_act].dtype == "object":
-                    dummy = df[feature_act]
-                else:
-                    dummy = pd.qcut(df[feature_act], 10, duplicates="drop").astype("object").fillna("(Missing)")
-                tmp = pd.crosstab(dummy, df[target])
-                y_score = (pd.DataFrame(dummy).reset_index()
-                           .merge(tmp.div(tmp.sum(axis=1), axis=0).reset_index(), how="inner")
-                           .sort_values("index")
-                           .reset_index(drop=True)[y_true.columns.values])
-                varimp_act = {feature_act: roc_auc_score(y_true, y_score).round(3)}
-            except:
-                varimp_act = {feature_act: 0.5}
-
-        if target_type == "REGR":
-            y_true = df[target]
-            if df[feature_act].dtype == "object":
-                y_score = df.groupby(feature_act)[target].transform("mean")
-            else:
-                y_score = df[feature_act]
-            varimp_act = {feature_act: (abs(pd.DataFrame({"y_true": y_true, "y_score": y_score})
-                                            .corr(method="spearman")
-                                            .values[0, 1]).round(3))}
-
-        varimp = varimp.append(pd.Series(varimp_act))
-    varimp.sort_values(ascending=False, inplace=True)
-    return varimp
 
 
 # Plot CV results
@@ -598,7 +612,7 @@ def plot_learning_curve(n_train, score_train, score_test, pdf=None):
 
 # Plot ML-algorithm performance
 def plot_all_performances(y, yhat, labels=None, target_type="CLASS", regplot=True,
-                          colors=None, ylim=None, w=18, h=12, pdf=None):
+                          color=None, ylim=None, n_bins=10, w=18, h=12, pdf=None):
     # y=df_test["target"]; yhat=yhat_test; ylim = None; w=12; h=8
 
     if target_type == "CLASS":
@@ -737,7 +751,7 @@ def plot_all_performances(y, yhat, labels=None, target_type="CLASS", regplot=Tru
         plot_scatter(yhat, y,
                      xlabel=r"$\^y$", ylabel="y",
                      title=r"Observed vs. Fitted ($\rho_{Spearman}$ = " +
-                           str(spearman_loss_func(y, yhat).round(3)) + ")",
+                           str(spear(y, yhat).round(3)) + ")",
                      ylim=ylim, ax_act=ax[0, 0])
         plot_scatter(yhat, y - yhat,
                      xlabel=r"$\^y$", ylabel=r"y-$\^y$", title="Residuals vs. Fitted",
@@ -785,11 +799,13 @@ def plot_all_performances(y, yhat, labels=None, target_type="CLASS", regplot=Tru
         ax_act.legend(title="", loc="best")
 
     if target_type == "MULTICLASS":
-        fig, ax = plt.subplots(2, 2)
+       # y = df_test["target"]; yhat = yhat_test; labels = labels; target_type = TARGET_TYPE;
+       # color = threecol; ylim = None; n_bins=10
+        fig, ax = plt.subplots(2, 3)
 
         # AUC
-        k = yhat.shape[1]
         ax_act = ax[0, 0]
+        k = yhat.shape[1]
         aucs = np.array([roc_auc_score(np.where(y == i, 1, 0), yhat[:, i]).round(2) for i in np.arange(k)])
 
         for i in np.arange(k):
@@ -797,7 +813,7 @@ def plot_all_performances(y, yhat, labels=None, target_type="CLASS", regplot=Tru
             y_bin = np.where(y == i, 1, 0)
             fpr, tpr, cutoff = roc_curve(y_bin, yhat[:, i])
             new_label = labels[i] + " (" + str(aucs[i]) + ")"
-            ax_act.plot(fpr, tpr, color=colors[i], label=new_label)
+            ax_act.plot(fpr, tpr, color=color[i], label=new_label)
         mean_auc = np.average(aucs).round(3)
         weighted_auc = np.average(aucs, weights=np.array(np.unique(y, return_counts=True))[1, :]).round(3)
         props = dict(xlabel=r"fpr: P($\^y$=1|$y$=0)",
@@ -805,10 +821,22 @@ def plot_all_performances(y, yhat, labels=None, target_type="CLASS", regplot=Tru
                      title="ROC\n" + r"($AUC_{mean}$ = " + str(mean_auc) + r", $AUC_{weighted}$ = " +
                            str(weighted_auc) + ")")
         ax_act.set(**props)
-        ax_act.legend(title=r"Target ($AUC_{1-vs-all}$)", loc='best')
+        ax_act.legend(title=r"Target ($AUC_{OvR}$)", loc='best')
+
+        # Calibration
+        #fig, ax = plt.subplots(2, 2)
+        ax_act = ax[1, 0]
+        for i in np.arange(k):
+            true, predicted = calibration_curve(np.where(y == i, 1, 0), yhat[:, i], n_bins=n_bins, strategy="quantile")
+            ax_act.plot(predicted, true, "o-", color=color[i], label=labels[i], markersize=4)
+        props = {'xlabel': r"$\bar{\^y}$ in $\^y$-bin",
+                 'ylabel': r"$\bar{y}$ in $\^y$-bin",
+                 'title': "Calibration"}
+        ax_act.set(**props)
+        ax_act.legend(title="Target", loc='best')
 
         # Confusion Matrix
-        ax_act = ax[1, 0]
+        ax_act = ax[0, 1]
 
         y_pred = yhat.argmax(axis=1)
         freq_true = np.unique(y, return_counts=True)[1]
@@ -817,10 +845,6 @@ def plot_all_performances(y, yhat, labels=None, target_type="CLASS", regplot=Tru
         freqpct_pred = np.round(np.divide(freq_pred, len(y)) * 100, 1)
 
         m_conf = confusion_matrix(y, y_pred)
-        prec = np.round(np.diag(m_conf) / m_conf.sum(axis=0) * 100, 1)
-        rec = np.round(np.diag(m_conf) / m_conf.sum(axis=1) * 100, 1)
-        f1 = np.round(2 * prec * rec / (prec + rec), 1)
-
         ylabels = [labels[i] + " (" + str(freq_true[i]) + ": " + str(freqpct_true[i]) + "%)" for i in
                    np.arange(len(labels))]
         xlabels = [labels[i] + " (" + str(freq_pred[i]) + ": " + str(freqpct_pred[i]) + "%)" for i in
@@ -828,7 +852,8 @@ def plot_all_performances(y, yhat, labels=None, target_type="CLASS", regplot=Tru
         df_conf = pd.DataFrame(m_conf, columns=labels, index=labels).rename_axis(index="True label",
                                                                                  columns="Predicted label")
         acc = accuracy_score(y, y_pred)
-        sns.heatmap(df_conf, annot=True, fmt=".5g", cmap="Blues", ax=ax_act, xticklabels=True, yticklabels=True)
+        sns.heatmap(df_conf, annot=True, fmt=".5g", cmap="Blues", ax=ax_act,
+                    xticklabels=True, yticklabels=True, cbar=False)
         ax_act.set_yticklabels(labels=ylabels, rotation=0)
         ax_act.set_xticklabels(labels=xlabels, rotation=90, ha="center")
         props = dict(ylabel="True label (#: %)",
@@ -838,8 +863,22 @@ def plot_all_performances(y, yhat, labels=None, target_type="CLASS", regplot=Tru
         for text in ax_act.texts[::len(labels) + 1]:
             text.set_weight('bold')
 
+        # Barplots
+        ax_act = ax[0, 2]
+        df_conf.iloc[::-1].plot.barh(stacked=True, ax=ax_act, color=color[:len(labels)])
+        ax_act.legend(title="Predicted label", loc='center left', bbox_to_anchor=(1, 0.5))
+        #fig, ax = plt.subplots(2, 2)
+        ax_act = ax[1, 1]
+        df_conf.copy().T.iloc[:,::-1].plot.bar(stacked=True, ax=ax_act, color=color[:len(labels)][::-1])
+        handles, labels = ax_act.get_legend_handles_labels()
+        ax_act.legend(handles[::-1], labels[::-1], title="True label", loc='center left', bbox_to_anchor=(1, 0.5))
+
         # Metrics
-        ax_act = ax[0, 1]
+        #fig, ax = plt.subplots(2, 3)
+        ax_act = ax[1, 2]
+        prec = np.round(np.diag(m_conf) / m_conf.sum(axis=0) * 100, 1)
+        rec = np.round(np.diag(m_conf) / m_conf.sum(axis=1) * 100, 1)
+        f1 = np.round(2 * prec * rec / (prec + rec), 1)
         df_metrics = pd.DataFrame(np.column_stack((y, np.flip(np.argsort(yhat, axis=1), axis=1)[:, :3])),
                                   columns=["y", "yhat1", "yhat2", "yhat3"]). \
             assign(acc_top1=lambda x: (x["y"] == x["yhat1"]).astype("int"),
@@ -850,22 +889,18 @@ def plot_all_performances(y, yhat, labels=None, target_type="CLASS", regplot=Tru
             groupby(["label"])["acc_top1", "acc_top2", "acc_top3"].agg("mean").round(2). \
             join(pd.DataFrame(np.stack((aucs, rec, prec, f1), axis=1),
                               index=labels, columns=["auc", "recall", "precision", "f1"]))
-
-        sns.heatmap(df_metrics, annot=True, fmt=".5g",
+        sns.heatmap(df_metrics.T, annot=True, fmt=".5g",
                     cmap=ListedColormap(['white']), linewidths=2, linecolor="black", cbar=False,
                     ax=ax_act, xticklabels=True, yticklabels=True)
-        ax_act.set_xticklabels(labels=['Accuracy\n Top1', 'Accuracy\n Top2', 'Accuracy\n Top3', "AUC\n 1-vs-all",
+        ax_act.set_yticklabels(labels=['Accuracy\n Top1', 'Accuracy\n Top2', 'Accuracy\n Top3', "AUC\n 1-vs-all",
                                        'Recall\n' r"P($\^y$=k|$y$=k))", 'Precision\n' r"P($y$=k|$\^y$=k))", 'F1'])
+        #ax_act.set_yticklabels(labels=ylabels, rotation=0)
         ax_act.xaxis.tick_top()  # x axis on top
         ax_act.xaxis.set_label_position('top')
         ax_act.tick_params(left=False, top=False)
-        ax_act.set_ylabel("True label")
-
-        # Barplot
-        ax_act = ax[1, 1]
-        df_conf.iloc[::-1].plot.barh(stacked=True, ax=ax_act, color=colors[:len(labels)])
-        ax_act.legend(loc="center left", bbox_to_anchor=(1, 0.5))
-        ax_act.legend(loc='center left', title="Predicted label", bbox_to_anchor=(1, 0.5))
+        ax_act.set_xlabel("True label")
+        #ax_act.patch.set_edgecolor('black')
+        #ax_act.patch.set_linewidth('1')
 
     # Adapt figure
     fig.set_size_inches(w=w, h=h)
@@ -885,19 +920,19 @@ def calc_varimp_by_permutation(df, df_ref, fit,
                                random_seed=999,
                                n_jobs=4):
     # df=df_train;  df_ref=df; target = "target"
+    #pdb.set_trace()
     all_features = np.append(metr, cate)
     if features is None:
         features = all_features
 
     # Original performance
-    if target_type == "CLASS":
-        perf_orig = roc_auc_score(df[target],
-                                  scale_predictions(fit.predict_proba(CreateSparseMatrix(metr, cate, df_ref).
-                                                                      fit_transform(df)),
-                                                    b_sample, b_all)[:, 1])
-    if target_type == "REGR":
-        perf_orig = spearman_loss_func(df[target],
-                                       fit.predict(CreateSparseMatrix(metr, cate, df_ref).fit_transform(df)))
+    if target_type in ["CLASS", "MULTICLASS"]:
+        perf_orig = auc(df[target],
+                        scale_predictions(fit.predict_proba(CreateSparseMatrix(metr, cate, df_ref).fit_transform(df)),
+                                          b_sample, b_all))
+    elif target_type == "REGR":
+        perf_orig = spear(df[target],
+                          fit.predict(CreateSparseMatrix(metr, cate, df_ref).fit_transform(df)))
 
     # Performance per variable after permutation
     np.random.seed(random_seed)
@@ -907,14 +942,14 @@ def calc_varimp_by_permutation(df, df_ref, fit,
     def run_in_parallel(df, feature):
         df_perm = df.copy()
         df_perm[feature] = df_perm[feature].values[i_perm]
-        if target_type == "CLASS":
-            perf = roc_auc_score(df_perm[target],
-                                 scale_predictions(
-                                     fit.predict_proba(CreateSparseMatrix(metr, cate, df_ref).fit_transform(df_perm)),
-                                     b_sample, b_all)[:, 1])
-        if target_type == "REGR":
-            perf = spearman_loss_func(df_perm[target],
-                                      fit.predict(CreateSparseMatrix(metr, cate, df_ref).fit_transform(df_perm)))
+        if target_type in ["CLASS", "MULTICLASS"]:
+            perf = auc(df_perm[target],
+                       scale_predictions(fit.predict_proba(CreateSparseMatrix(metr, cate, df_ref)
+                                                           .fit_transform(df_perm)),
+                                         b_sample, b_all))
+        elif target_type == "REGR":
+            perf = spear(df_perm[target],
+                         fit.predict(CreateSparseMatrix(metr, cate, df_ref).fit_transform(df_perm)))
         return perf
     perf = Parallel(n_jobs=n_jobs, max_nbytes='100M')(delayed(run_in_parallel)(df, feature)
                                                       for feature in features)

@@ -15,17 +15,28 @@ import xgboost as xgb
 TARGET_TYPE = "CLASS"
 
 # Specific parameters
+n_jobs = 4
+labels = None
 if TARGET_TYPE == "CLASS":
-    metric = "roc_auc"  # metric for peformance comparison
-    importance_cut = 99.9
+    metric = "auc"  # metric for peformance comparison
+    importance_cut = 99
     topn = 8
-    ylim_res = (-1, 1)
+    ylim_res = (0, 1)
+    color = twocol
+
+if TARGET_TYPE == "MULTICLASS":
+    metric = "auc"  # metric for peformance comparison
+    importance_cut = 95
+    topn = 15
+    ylim_res = (0, 1)
+    color = threecol
 
 if TARGET_TYPE == "REGR":
-    metric = make_scorer(spearman_loss_func, greater_is_better=True)
+    metric = "spear"
     importance_cut = 95
     topn = 15
     ylim_res = (-5e4, 5e4)
+    color = None
 
 # Load results from exploration
 df = metr_standard = cate_standard = metr_binned = cate_binned = metr_encoded = cate_encoded = None
@@ -33,26 +44,35 @@ with open(TARGET_TYPE + "_1_explore.pkl", "rb") as file:
     d_pick = pickle.load(file)
 for key, val in d_pick.items():
     exec(key + "= val")
+
+# Features for xgboost
 metr = metr_standard
 cate = cate_standard
 features = np.append(metr, cate)
+
+# Switch target to numeric in case of multiclass
+if TARGET_TYPE == "MULTICLASS":
+    tmp = LabelEncoder()
+    df["target"] = tmp.fit_transform(df["target"])
+    labels = tmp.classes_
+
 
 # ######################################################################################################################
 # Prepare
 # ######################################################################################################################
 
-# Tuning parameter to use (for xgb)
-n_estimators = 1100
-learning_rate = 0.01
-max_depth = 3
-min_child_weight = 10
-colsample_bytree = 0.7
-subsample = 0.7
-gamma = 0
+# Tuning parameter to use (for xgb) and classifier definition
+xgb_param = dict(n_estimators=1100, learning_rate=0.01,
+                 max_depth=3, min_child_weight=10,
+                 colsample_bytree=0.7, subsample=0.7,
+                 gamma=0,
+                 verbosity=0)
+clf = xgb.XGBRegressor(**xgb_param) if TARGET_TYPE == "REGR" else xgb.XGBClassifier(**xgb_param)
 
 
 # --- Sample data ----------------------------------------------------------------------------------------------------
-if TARGET_TYPE == "CLASS":
+
+if TARGET_TYPE in ["CLASS", "MULTICLASS"]:
     # Training data: Just take data from train fold (take all but n_maxpersample at most)
     df.loc[df["fold"] == "train", "target"].describe()
     under_samp = Undersample(n_max_per_level=500)
@@ -60,8 +80,7 @@ if TARGET_TYPE == "CLASS":
     b_sample = under_samp.b_sample
     b_all = under_samp.b_all
     print(b_sample, b_all)
-
-if TARGET_TYPE == "REGR":
+else:
     df_train = (df.query("fold == 'train'").sample(n=min(df.query("fold == 'train'").shape[0], int(5e3)))
                 .reset_index(drop=True))
     b_sample = None
@@ -89,48 +108,40 @@ for i_train, i_test in split_my5fold.split(df_traintest):
 # --- Do the full fit and predict on test data -------------------------------------------------------------------
 
 # Fit
-if TARGET_TYPE == "CLASS":
-    clf = xgb.XGBClassifier(n_estimators=n_estimators, learning_rate=learning_rate,
-                            max_depth=max_depth, min_child_weight=min_child_weight,
-                            colsample_bytree=colsample_bytree, subsample=subsample,
-                            gamma=0,
-                            verbosity=0)
-if TARGET_TYPE == "REGR":
-    clf = xgb.XGBRegressor(n_estimators=n_estimators, learning_rate=learning_rate,
-                           max_depth=max_depth, min_child_weight=min_child_weight,
-                           colsample_bytree=colsample_bytree, subsample=subsample,
-                           gamma=0,
-                           verbosity=0)
 X_train = CreateSparseMatrix(metr=metr, cate=cate, df_ref=df_traintest).fit_transform(df_train)
 fit = clf.fit(X_train, df_train["target"].values)
 
 # Predict
 X_test = CreateSparseMatrix(metr=metr, cate=cate, df_ref=df_traintest).fit_transform(df_test)
-if TARGET_TYPE == "CLASS":
+if TARGET_TYPE in ["CLASS", "MULTICLASS"]:
     yhat_test = scale_predictions(fit.predict_proba(X_test), b_sample, b_all)
-if TARGET_TYPE == "REGR":
+else:
     yhat_test = fit.predict(X_test)
-pd.DataFrame(yhat_test).describe()
-if TARGET_TYPE == "CLASS":
-    print(roc_auc_score(df_test["target"].values, yhat_test[:, 1]))
-if TARGET_TYPE == "REGR":
-    print(spearman_loss_func(df_test["target"].values, yhat_test))
+print(pd.DataFrame(yhat_test).describe())
+
+# Performance
+if TARGET_TYPE in ["CLASS", "MULTICLASS"]:
+    print(auc(df_test["target"].values, yhat_test))
+else:
+    print(spear(df_test["target"].values, yhat_test))
+
 
 # Plot performance
-plot_all_performances(df_test["target"], yhat_test, target_type=TARGET_TYPE, ylim=None,
+plot_all_performances(df_test["target"], yhat_test, labels=labels, target_type=TARGET_TYPE,
+                      color=color, ylim=None,
                       pdf=plotloc + TARGET_TYPE + "_performance.pdf")
 
 
 # --- Check performance for crossvalidated fits ---------------------------------------------------------------------
 d_cv = cross_validate(clf,
-                      (CreateSparseMatrix(metr=metr, cate=cate, df_ref=df_traintest)
-                          .fit_transform(df_traintest)),
-                      df_traintest["target"].values,
+                      (CreateSparseMatrix(metr=metr, cate=cate, df_ref=df_traintest).fit_transform(df_traintest)),
+                      df_traintest["target"],
                       cv=split_my5fold.split(df_traintest),  # special 5fold
-                      scoring=metric, n_jobs=5,
-                      return_estimator=True)
+                      scoring=scoring[TARGET_TYPE],
+                      return_estimator=True,
+                      n_jobs=4)
 # Performance
-print(d_cv["test_score"])
+print(d_cv["test_" + metric])
 
 
 # --- Most important variables (importance_cum < 95) model fit ------------------------------------------------------
@@ -149,14 +160,14 @@ fit_top = clone(clf).fit(X_train_top, df_train["target"])
 # Plot performance
 X_test_top = CreateSparseMatrix(metr[np.in1d(metr, features_top)], cate[np.in1d(cate, features_top)],
                                 df_ref=df_traintest).fit_transform(df_test)
-if TARGET_TYPE == "CLASS":
+if TARGET_TYPE in ["CLASS", "MULTICLASS"]:
     yhat_top = scale_predictions(fit_top.predict_proba(X_test_top), b_sample, b_all)
-    print(roc_auc_score(df_test["target"].values, yhat_top[:, 1]))
-if TARGET_TYPE == "REGR":
+    print(auc(df_test["target"].values, yhat_top))
+else:
     yhat_top = fit_top.predict(X_test_top)
-    print(spearman_loss_func(df_test["target"].values, yhat_top))
-
-plot_all_performances(df_test["target"], yhat_top, target_type=TARGET_TYPE,
+    print(spear(df_test["target"].values, yhat_top))
+plot_all_performances(df_test["target"], yhat_top, labels=labels, target_type=TARGET_TYPE,
+                      color=color, ylim=None,
                       pdf=plotloc + TARGET_TYPE + "_performance_top.pdf")
 
 
@@ -167,25 +178,21 @@ plot_all_performances(df_test["target"], yhat_top, target_type=TARGET_TYPE,
 # ---- Check residuals --------------------------------------------------------------------------------------------
 
 # Residuals
-if TARGET_TYPE == "CLASS":
-    df_test["yhat"] = yhat_test[:, 1]
+if TARGET_TYPE in ["CLASS", "MULTICLASS"]:
+    df_test["residual"] = 1 - yhat_test[np.arange(len(df_test["target"])), df_test["target"]]  # yhat of true class
+else:
+    df_test["residual"] = df_test["target"] - yhat_test
 
-if TARGET_TYPE == "REGR":
-    df_test["yhat"] = yhat_test
-
-df_test["residual"] = df_test["target"] - df_test["yhat"]
 df_test["abs_residual"] = df_test["residual"].abs()
 df_test["residual"].describe()
-
 
 # For non-regr tasks one might want to plot it for each target level (df_test.query("target == 0/1"))
 plot_distr(df_test, features, target="residual", target_type="REGR", ylim=ylim_res,
            ncol=3, nrow=2, w=18, h=12, pdf=plotloc + TARGET_TYPE + "_diagnosis_residual.pdf")
 plt.close(fig="all")
 
-
 # Absolute residuals
-if TARGET_TYPE in ["CLASS", "REGR"]:
+if TARGET_TYPE == "REGR":
     plot_distr(df_test, features, target="abs_residual", target_type="REGR", ylim=(0,ylim_res[1]),
                ncol=3, nrow=2, w=18, h=12, pdf=plotloc + TARGET_TYPE + "_diagnosis_absolute_residual.pdf")
 plt.close(fig="all")
@@ -226,7 +233,7 @@ for i, (i_train, i_test) in enumerate(split_my5fold.split(df_traintest)):
 
 # Plot
 plot_variable_importance(df_varimp, mask=df_varimp["feature"].isin(topn_features),
-                         pdf = plotloc + TARGET_TYPE + "_variable_importance.pdf")
+                         pdf=plotloc + TARGET_TYPE + "_variable_importance.pdf")
 
 
 # --- Compare variable importance for train and test (hints to variables prone to overfitting) -------------------------
@@ -239,25 +246,32 @@ sns.barplot("importance_sumnormed", "feature", hue="fold",
 # Partial Dependance
 # ######################################################################################################################
 
-df_pd = calc_partial_dependence(df_test, df_traintest, fit, "target", metr, cate, target_type=TARGET_TYPE,
-                                b_sample=b_sample, b_all=b_all,
-                                features=topn_features)
+# TODO: Add multiclass solution
+if TARGET_TYPE != "MULTICLASS":
+    # Calc PD
+    df_pd = calc_partial_dependence(df_test, df_traintest, fit, "target", metr, cate, target_type=TARGET_TYPE,
+                                    b_sample=b_sample, b_all=b_all,
+                                    features=topn_features)
 
-# Crossvalidate Depedence
-df_pd_cv = pd.DataFrame()
-for i, (i_train, i_test) in enumerate(split_my5fold.split(df_traintest)):
-    df_tmp = calc_partial_dependence(df_traintest.iloc[i_train, :], df_traintest, d_cv["estimator"][i],
-                                     "target", metr, cate, TARGET_TYPE,
-                                     b_sample, b_all,
-                                     features=topn_features)
-    df_tmp["run"] = i
-    df_pd_cv = df_pd_cv.append(df_tmp)
+    # Crossvalidate Dependance
+    df_pd_cv = pd.DataFrame()
+    for i, (i_train, i_test) in enumerate(split_my5fold.split(df_traintest)):
+        df_tmp = calc_partial_dependence(df_traintest.iloc[i_train, :], df_traintest, d_cv["estimator"][i],
+                                         "target", metr, cate, TARGET_TYPE,
+                                         b_sample, b_all,
+                                         features=topn_features)
+        df_tmp["run"] = i
+        df_pd_cv = df_pd_cv.append(df_tmp)
+
+    # Plot it
+    # TODO
 
 
 # ######################################################################################################################
-# xgboost Explainer
+# Explanations
 # ######################################################################################################################
 
-# TODOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+# TODO
+
 
 plt.close("all")
