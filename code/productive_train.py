@@ -3,7 +3,7 @@
 # ######################################################################################################################
 
 # General libraries, parameters and functions
-from init import *
+from initialize import *
 
 # Specific libraries
 from sklearn.pipeline import Pipeline

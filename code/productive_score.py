@@ -3,7 +3,7 @@
 # ######################################################################################################################
 
 # General libraries, parameters and functions
-from init import *
+from initialize import *
 
 # Load pipelines
 with open("productive.pkl", "rb") as file:
