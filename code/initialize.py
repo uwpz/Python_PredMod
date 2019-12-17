@@ -27,11 +27,13 @@ from sklearn.base import BaseEstimator, TransformerMixin  # , ClassifierMixin
 from sklearn.impute import SimpleImputer
 # from sklearn.externals.six import StringIO
 # from glmnet_python import glmnet, glmnetPredict
+import shap
 
 # Util
 # noinspection PyUnresolvedReferences
 import sys, os, pickle, pdb  # pdb.set_trace()  #quit with "q", next line with "n", continue with "c"
 from joblib import Parallel, delayed
+import warnings
 
 # from collections import defaultdict
 # from dill import (load_session, dump_session)
@@ -77,8 +79,10 @@ colors = colors.iloc[np.setdiff1d(np.arange(len(colors)), [6, 7, 8, 9, 12, 13, 1
 def setdiff(a, b):
     return np.setdiff1d(a, b, True)
 
+
 def inv_logit(p):
     return np.exp(p) / (1 + np.exp(p))
+
 
 def spear(y_true, y_pred):
     return pd.DataFrame({"y_true": y_true, "y_pred": y_pred}).corr(method = "spearman").values[0, 1]
@@ -165,10 +169,11 @@ def calc_imp(df, features, target = "target", target_type = "CLASS"):
             else:
                 dummy = pd.qcut(df[feature_act], 10, duplicates = "drop").astype("object").fillna("(Missing)")
             tmp = pd.crosstab(dummy, df[target])
-            y_score = (pd.DataFrame(dummy).reset_index()
-                .merge(tmp.div(tmp.sum(axis = 1), axis = 0).reset_index(), how = "inner")
-                .sort_values("index")
-                .reset_index(drop = True)[y_true.columns.values])
+            y_score = (pd.DataFrame(dummy)
+                       .reset_index()
+                       .merge(tmp.div(tmp.sum(axis = 1), axis = 0).reset_index(), how = "inner")
+                       .sort_values("index")
+                       .reset_index(drop = True)[y_true.columns.values])
             varimp_act = {feature_act: round(roc_auc_score(y_true, y_score), 3)}
             # except: varimp_act = {feature_act: 0.5}
 
@@ -355,23 +360,18 @@ def plot_distr(df, features,
                 ax_act.set_ylim(ylim[0] - 0.4 * (ylim[1] - ylim[0]))
                 inset_ax = ax_act.inset_axes([0, 0.07, 1, 0.2])
                 inset_ax.set_axis_off()
-                inset_ax.get_yaxis().set_visible(False)
                 ax_act.get_shared_x_axes().join(ax_act, inset_ax)
                 i_bool = df[feature_act].notnull()
                 sns.distplot(df[feature_act].dropna(), bins = 20, color = "black", ax = inset_ax)
-                inset_ax.set_xlabel("")
 
                 # Inner-inner Boxplot
                 inset_ax = ax_act.inset_axes([0, 0.01, 1, 0.05])
-                # ylim_inner = inset_ax.get_ylim()
-                # inset_ax.set_ylim(ylim_inner[0] - 0.35 * (ylim_inner[1] - ylim_inner[0]))
                 inset_ax.set_axis_off()
                 inset_ax.get_shared_x_axes().join(ax_act, inset_ax)
                 sns.boxplot(x = df.loc[i_bool, feature_act], palette = ["grey"], ax = inset_ax)
-                # inset_ax.set_xlabel("")
                 inset_ax.set_xlabel(feature_act + " (NA: " +
                                     str(df[feature_act].isnull().mean().round(3) * 100) +
-                                    "%)")
+                                    "%)")  # set it again!
 
             # Categorical feature
             else:
@@ -410,13 +410,14 @@ def plot_distr(df, features,
                 ax_act.set_xlim(xlim[0] - 0.3 * (xlim[1] - xlim[0]))
                 inset_ax = ax_act.inset_axes([0, 0, 0.2, 1])
                 inset_ax.set_axis_off()
+                inset_ax.get_shared_y_axes().join(ax_act, inset_ax)
                 if ylim is not None:
                     ax_act.axvline(ylim[0], color = "black")
-                df_plot.plot.barh(y = "w", x = feature_act,
-                                  color = "lightgrey", ax = inset_ax, edgecolor = "black", linewidth = 1,
-                                  legend = False)
-                # inset_ax.barh(df_plot[feature_act], df_plot.w, color="lightgrey", edgecolor="black",
-                #              linewidth=1)
+                # df_plot.plot.barh(y = "w", x = feature_act,
+                #                   color = "lightgrey", ax = inset_ax, edgecolor = "black", linewidth = 1,
+                #                   legend = False)
+                inset_ax.barh(df_plot.index.values + 1, df_plot.w, color="lightgrey", edgecolor="black",
+                              linewidth=1)
 
         i_ax += 1
 
@@ -605,12 +606,18 @@ def plot_learning_curve(n_train, score_train, score_test, pdf = None):
 
 # Rescale predictions (e.g. to rewind undersampling)
 def scale_predictions(yhat, b_sample = None, b_all = None):
+    flag_1dim = False
     if b_sample is None:
         yhat_rescaled = yhat
     else:
+        if yhat.ndim == 1:
+            flag_1dim = True
+            yhat = np.column_stack((1-yhat, yhat))
         # tmp = yhat * np.array([1 - b_all, b_all]) / np.array([1 - b_sample, b_sample])
         tmp = (yhat * b_all) / b_sample
         yhat_rescaled = (tmp.T / tmp.sum(axis = 1)).T  # transposing is needed for casting
+    if flag_1dim:
+        yhat_rescaled = yhat_rescaled[:, 1]
     return yhat_rescaled
 
 
@@ -1045,6 +1052,119 @@ def calc_partial_dependence(df, df_ref, fit,
     return df_pd
 
 
+# Calculate shapely values
+# noinspection PyPep8Naming
+def calc_shap(df_explain, fit, tr_sparse = None, metr = None, cate = None, df_ref = None,
+              target_type = "CLASS", b_sample = None, b_all = None):
+    # target_type = TARGET_TYPE;
+
+    # Calc X_explain:
+    if tr_sparse is None:
+        tr_sparse = CreateSparseMatrix(metr = metr, cate = cate, df_ref = df_ref)
+    X_explain = tr_sparse.transform(df_explain)
+
+    # Get shap values
+    explainer = shap.TreeExplainer(fit)
+    shap_values = explainer.shap_values(X_explain)
+    intercepts = explainer.expected_value
+
+    # Make it iterable
+    if target_type != "MULTICLASS":
+        shap_values = [shap_values]
+        intercepts = [intercepts]
+
+    # Aggregate shap to variable and add intercept
+    df_shap = pd.DataFrame()
+    for i in range(len(shap_values)):
+        df_shap = df_shap.append(
+            pd.DataFrame(shap_values[i])
+            .reset_index(drop = True)  # clear index
+            .reset_index().rename(columns = {"index": "row_id"})  # add row_id
+            .melt(id_vars = "row_id", var_name = "position", value_name = "shap_value")  # rotate
+            .merge(tr_sparse.df_map, how = "left", on = "position")  # add variable name to position
+            .groupby(["row_id", "variable"])["shap_value"].sum().reset_index()  # aggregate cate features
+            .merge(df_explain.reset_index()
+                   .rename(columns = {"index": "row_id"})
+                   .melt(id_vars = "row_id", var_name = "variable", value_name = "variable_value"),
+                   how = "left", on = ["row_id", "variable"])  # add variable value
+            .append(pd.DataFrame({"row_id": np.arange(len(df_explain)),
+                                  "variable": "intercept",
+                                  "shap_value": intercepts[i],
+                                  "variable_value": None})).reset_index(drop=True)  # add intercept
+            .assign(target = i)  # add target
+            .assign(flag_intercept = lambda x: np.where(x["variable"] == "intercept", 1, 0),
+                    abs_shap_value = lambda x: np.abs(x["shap_value"]))  # sorting columns
+            .sort_values(["flag_intercept", "abs_shap_value"], ascending=False)  # sort
+            .assign(shap_value_cum = lambda x: x.groupby(["row_id"])["shap_value"].transform("cumsum"))  # shap cum
+            .sort_values(["row_id", "flag_intercept", "abs_shap_value"], ascending = [True, False, False])
+            .assign(rank = lambda x: x.groupby(["row_id"]).cumcount()+1)).reset_index(drop=True)
+
+    if target_type == "REGR":
+        df_shap["yhat"] = df_shap["shap_value_cum"]
+    elif target_type == "CLASS":
+        df_shap["yhat"] = scale_predictions(inv_logit(df_shap["shap_value_cum"]), b_sample, b_all)
+    else:  # MULTICLASS: apply "cumulated" softmax (exp(shap_value_cum) / sum(exp(shap_value_cum)) and rescale
+        n_target = len(shap_values)
+        df_shap_tmp = df_shap.eval("denominator = 0")
+        for i in range(n_target):
+            df_shap_tmp = (df_shap_tmp
+                           .merge(df_shap.loc[df_shap["target"] == i, ["row_id", "variable", "shap_value"]]
+                                         .rename(columns = {"shap_value": "shap_value_" + str(i)}),
+                                  how = "left", on = ["row_id", "variable"])  # add shap from "other" target
+                           .sort_values("rank")  # sort by original rank
+                           .assign(**{"nominator_" + str(i):
+                                      lambda x: np.exp(x
+                                                       .groupby(["row_id", "target"])["shap_value_" + str(i)]
+                                                       .transform("cumsum"))})  # cumulate "other" targets and exp it
+                           .assign(denominator = lambda x: x["denominator"] + x["nominator_" + str(i)])  # adapt denom
+                           .drop(columns = ["shap_value_" + str(i)])  # make shape original again for next loop
+                           .reset_index(drop = True))
+
+        # Rescale yhat
+        df_shap_tmp = (df_shap_tmp.assign(**{"yhat_" + str(i):
+                                             df_shap_tmp["nominator_" + str(i)] / df_shap_tmp["denominator"]
+                                             for i in range(n_target)})
+                       .drop(columns = ["nominator_" + str(i) for i in range(n_target)]))
+        yhat_cols = ["yhat_" + str(i) for i in range(n_target)]
+        df_shap_tmp[yhat_cols] = scale_predictions(df_shap_tmp[yhat_cols], b_sample, b_all)
+
+        # Select correct yhat
+        df_shap_tmp2 = pd.DataFrame()
+        for i in range(n_target):
+            df_shap_tmp2 = df_shap_tmp2.append(
+                (df_shap_tmp
+                 .query("target == @i")
+                 .assign(yhat = lambda x: x["yhat_" + str(i)])
+                 .drop(columns = yhat_cols)))
+
+        # Sort it to convenient shape
+        df_shap = df_shap_tmp2.sort_values(["row_id", "target", "rank"]).reset_index(drop = True)
+
+    return df_shap
+
+
+# Check if shap values and yhat match
+def check_shap(df_shap, yhat_shap, target_type = "CLASS"):
+
+    # Check
+    max_rank = df_shap["rank"].max()
+    if target_type == "CLASS":
+        close = np.isclose(df_shap.query("rank == @max_rank").yhat.values, yhat_shap[:, 1])
+    elif target_type == "MULTICLASS":
+        close = np.isclose(df_shap.query("rank == @max_rank").pivot(index = "row_id", columns = "target",
+                                                                    values = "yhat"),
+                           yhat_shap)
+    else:
+        close = np.isclose(df_shap.query("rank == @max_rank").yhat.values, yhat_shap)
+
+    # Write warning
+    if np.sum(close) != yhat_shap.size:
+        warnings.warn("Warning: Shap values and yhat do not match! See following match array:")
+        print(close)
+    else:
+        print("Info: Shap values and yhat match.")
+
+
 # ######################################################################################################################
 # Classes
 # ######################################################################################################################
@@ -1094,12 +1214,12 @@ class TargetEncoding(BaseEstimator, TransformerMixin):
             df["tmp"] = np.where(df[self.target] == df[self.target].value_counts().values[0], 1, 0)
         else:
             df["tmp"] = df[self.target]
-        self._d_map = {x: df.loc[df[self.encode_flag_column] == 1, :].reset_index(drop = True)
-            .groupby(x, as_index = False)["tmp"].agg("mean")
-            .sort_values("tmp", ascending = False)
-            .assign(rank = lambda x: np.arange(len(x)) + 1)
-            .set_index(x)["rank"]
-            .to_dict() for x in self.features}
+        self._d_map = {x: (df.loc[df[self.encode_flag_column] == 1, :].reset_index(drop = True)
+                           .groupby(x, as_index = False)["tmp"].agg("mean")
+                           .sort_values("tmp", ascending = False)
+                           .assign(rank = lambda x: np.arange(len(x)) + 1)
+                           .set_index(x)["rank"]
+                           .to_dict()) for x in self.features}
         self._statistics = {"_d_map": self._d_map}
         return self
 

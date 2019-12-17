@@ -11,7 +11,7 @@ from initialize import *
 
 
 # Main parameter
-TARGET_TYPE = "CLASS"
+TARGET_TYPE = "REGR"
 
 # Specific parameters (CLASS is default)
 ylim = None
@@ -294,7 +294,7 @@ if TARGET_TYPE == "MULTICLASS":
     df["target"] = tmp.fit_transform(df["target"])
     target_labels = tmp.classes_
 else:
-    target_labels = None
+    target_labels = "target"
 
 # --- Define final features ----------------------------------------------------------------------------------------
 

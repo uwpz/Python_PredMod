@@ -12,7 +12,7 @@ from sklearn.base import clone
 import xgboost as xgb
 
 # Main parameter
-TARGET_TYPE = "CLASS"
+TARGET_TYPE = "REGR"
 
 # Specific parameters
 n_jobs = 4
@@ -47,6 +47,7 @@ for key, val in d_pick.items():
 metr = metr_standard
 cate = cate_standard
 features = np.append(metr, cate)
+
 
 # ######################################################################################################################
 # Prepare
@@ -119,40 +120,6 @@ plot_all_performances(df_test["target"], yhat_test, target_labels = target_label
                       color = color, ylim = None,
                       pdf = plotloc + TARGET_TYPE + "_performance.pdf")
 
-# ############## explain
-
-
-import shap
-
-df_explain = df_test.loc[0:2, :]
-X_explain = tr_sparse.transform(df_explain)
-
-explainer = shap.TreeExplainer(fit)
-shap_values = explainer.shap_values(X_explain)
-df_shap = (pd.DataFrame(shap_values)
-           .reset_index(drop=True)  # clear index
-           .reset_index().rename(columns = {"index": "row_id"})  # add row_id
-           .melt(id_vars = "row_id", var_name = "position", value_name = "shap_value")  # rotate
-           .merge(tr_sparse.df_map, how="left", on="position")  # add variable name to position
-           .groupby(["row_id","variable"])["shap_value"].sum().reset_index()  # aggregate cate features
-           .merge(df_explain.reset_index()
-                  .rename(columns = {"index": "row_id"})
-                  .melt(id_vars = "row_id", var_name = "variable", value_name = "variable_value"),
-                  how="left", on = ["row_id", "variable"]))  # add variable value
-# Add intercept
-df_shap = df_shap.append(pd.DataFrame({"row_id": np.arange(len(df_explain)),
-                                       "variable": "intercept",
-                                       "shap_value": explainer.expected_value,
-                                       "variable_value": None}))
-a = inv_logit(df_shap.groupby("row_id")["shap_value"].sum().values)
-b = fit.predict_proba(X_explain)[:, 1]
-np.isclose(a, b)
-# explainer.shap_interaction_values(X_test)
-
-df_tmp = (df_explain.reset_index()
-          .rename(columns = {"index": "row_id"})
-          .melt(id_vars = "row_id", var_name = "variable", value_name = "variable_value"))
-
 
 # --- Check performance for crossvalidated fits ---------------------------------------------------------------------
 d_cv = cross_validate(clf,
@@ -192,6 +159,7 @@ plot_all_performances(df_test["target"], yhat_top, target_labels = target_labels
                       color = color, ylim = None,
                       pdf = plotloc + TARGET_TYPE + "_performance_top.pdf")
 
+
 # ######################################################################################################################
 # Diagnosis
 # ######################################################################################################################
@@ -225,9 +193,20 @@ if TARGET_TYPE == "REGR":
                pdf = plotloc + TARGET_TYPE + "_diagnosis_absolute_residual.pdf")
 plt.close(fig = "all")
 
+
 # ---- Explain bad predictions ------------------------------------------------------------------------------------
 
-# TODO
+# Get shap for n_worst predicted records
+n_worst = 10
+df_explain = df_test.sort_values("abs_residual", ascending = False).iloc[:n_worst, :]
+yhat_explain = yhat_test[df_explain.index.values]
+df_shap = calc_shap(df_explain, fit, tr_sparse = tr_sparse,
+                    target_type = TARGET_TYPE, b_sample = b_sample, b_all = b_all)
+
+# Check
+check_shap(df_shap, yhat_explain, target_type = TARGET_TYPE)
+
+# Plot: TODO
 
 
 # ######################################################################################################################
@@ -266,6 +245,7 @@ fig, ax = plt.subplots(1, 1)
 sns.barplot("importance_sumnormed", "feature", hue = "fold",
             data = pd.concat([df_varimp_train.assign(fold = "train"), df_varimp.assign(fold = "test")], sort = False))
 
+
 # ######################################################################################################################
 # Partial Dependance
 # ######################################################################################################################
@@ -296,7 +276,32 @@ for i, (i_train, i_test) in enumerate(split_my5fold.split(df_traintest)):
 # Explanations
 # ######################################################################################################################
 
-# TODO
+# ---- Explain bad predictions ------------------------------------------------------------------------------------
+
+# Filter data
+n_select = 10
+i_worst = df_test.sort_values("abs_residual", ascending = False).iloc[:n_select, :].index.values
+i_best = df_test.sort_values("abs_residual", ascending = True).iloc[:n_select, :].index.values
+i_random = df_test.sample(n = 11).index.values
+i_explain = np.unique(np.concatenate([i_worst, i_best, i_random]))
+yhat_explain = yhat_test[i_explain]
+df_explain = df_test.iloc[i_explain, :].reset_index()
+
+# Get shap
+df_shap = calc_shap(df_explain, fit, tr_sparse = tr_sparse,
+                    target_type = TARGET_TYPE, b_sample = b_sample, b_all = b_all)
+
+# Check
+check_shap(df_shap, yhat_explain, target_type = TARGET_TYPE)
+
+# Plot: TODO
 
 
 plt.close("all")
+
+
+# ######################################################################################################################
+# Individual dependencies
+# ######################################################################################################################
+
+# TODO
