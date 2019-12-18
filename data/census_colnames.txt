@@ -1,4 +1,4 @@
-age							
+age																				
 class_of_worker				
 industry_code					
 occupation_code						
@@ -14,10 +14,10 @@ sex
 member_of_a_labor_union		
 reason_for_unemployment		
 full_or_part_time_employment_stat			
-capital_gains								
-capital_losses							
-divdends_from_stocks										
-tax_filer_status							
+capital_gains							
+capital_losses					
+divdends_from_stocks							
+tax_filer_status					
 region_of_previous_residence				
 state_of_previous_residence				
 detailed_household_and_family_stat		

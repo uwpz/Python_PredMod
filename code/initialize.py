@@ -1149,7 +1149,8 @@ def check_shap(df_shap, yhat_shap, target_type = "CLASS"):
     # Check
     max_rank = df_shap["rank"].max()
     if target_type == "CLASS":
-        close = np.isclose(df_shap.query("rank == @max_rank").yhat.values, yhat_shap[:, 1])
+        yhat_shap = yhat_shap[:, 1]
+        close = np.isclose(df_shap.query("rank == @max_rank").yhat.values, yhat_shap)
     elif target_type == "MULTICLASS":
         close = np.isclose(df_shap.query("rank == @max_rank").pivot(index = "row_id", columns = "target",
                                                                     values = "yhat"),
@@ -1201,6 +1202,7 @@ class MapToomany(BaseEstimator, TransformerMixin):
 class TargetEncoding(BaseEstimator, TransformerMixin):
     def __init__(self, features, encode_flag_column = "use_for_encoding", target = "target",
                  remove_burned_data = False):
+        #pdb.set_trace()
         self.features = features
         self.encode_flag_column = encode_flag_column
         self.target = target
@@ -1209,6 +1211,7 @@ class TargetEncoding(BaseEstimator, TransformerMixin):
         self._statistics = None
 
     def fit(self, df, *_):
+        pdb.set_trace()
         if df[self.target].nunique() > 2:
             # Take majority class in case of MULTICLASS target
             df["tmp"] = np.where(df[self.target] == df[self.target].value_counts().values[0], 1, 0)
@@ -1224,6 +1227,7 @@ class TargetEncoding(BaseEstimator, TransformerMixin):
         return self
 
     def transform(self, df):
+        #pdb.set_trace()
         df[self.features + "_ENCODED"] = df[self.features].apply(lambda x: x.map(self._d_map[x.name])
                                                                  .fillna(np.median(list(self._d_map[x.name].values()))))
         if self.remove_burned_data:
