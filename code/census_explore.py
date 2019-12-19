@@ -234,6 +234,12 @@ plot_distr(df, cate_toprint, target = "fold_num", target_type = "CLASS",
            varimp = varimp_cate_fold,
            ncol = 2, nrow = 2, w = 12, h = 8, pdf = plotloc + "census_distr_cate_folddep.pdf")
 
+# Remove process change variables
+cate = setdiff(cate, ["migration_code_change_in_reg", "migration_prev_res_in_sunbelt",
+                      "migration_code_change_in_msa", "migration_code_move_within_reg",
+                      "live_in_this_house_1_year_ago", "full_or_part_time_employment_stat"])
+
+
 
 ########################################################################################################################
 # Prepare final data

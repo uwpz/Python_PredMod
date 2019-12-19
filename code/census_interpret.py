@@ -47,7 +47,13 @@ xgb_param = dict(n_estimators = 2100, learning_rate = 0.01,
                  gamma = 0,
                  verbosity = 0,
                  n_jobs = n_jobs)
-clf = xgb.XGBRegressor(**xgb_param) if TARGET_TYPE == "REGR" else xgb.XGBClassifier(**xgb_param)
+clf = xgb.XGBClassifier(**xgb_param)
+# import lightgbm as lgbm
+# lgbm_param = {"n_estimators": 2100, "learning_rate": 0.01,
+#                     "num_leaves": 32, "min_child_samples": 5,
+#                     "colsample_bytree": 0.2, "subsample": 0.7}
+# clf = lgbm.LGBMClassifier(**lgbm_param)
+
 
 # --- Sample data ----------------------------------------------------------------------------------------------------
 
@@ -80,12 +86,12 @@ for i_train, i_test in split_my5fold.split(df_traintest):
 # --- Do the full fit and predict on test data -------------------------------------------------------------------
 
 # Fit
-tr_sparse = CreateSparseMatrix(metr = metr, cate = cate, df_ref = df_traintest)
-X_train = tr_sparse.fit_transform(df_train)
+tr_spm = CreateSparseMatrix(metr = metr, cate = cate, df_ref = df_traintest)
+X_train = tr_spm.fit_transform(df_train)
 fit = clf.fit(X_train, df_train["target"].values)
 
 # Predict
-X_test = tr_sparse.transform(df_test)
+X_test = tr_spm.transform(df_test)
 yhat_test = scale_predictions(fit.predict_proba(X_test), b_sample, b_all)
 print(pd.DataFrame(yhat_test).describe())
 
@@ -100,9 +106,7 @@ plot_all_performances(df_test["target"], yhat_test, target_labels = target_label
 
 # --- Check performance for crossvalidated fits ---------------------------------------------------------------------
 
-d_cv = cross_validate(clf,
-                      (CreateSparseMatrix(metr = metr, cate = cate, df_ref = df_traintest).fit_transform(df_traintest)),
-                      df_traintest["target"],
+d_cv = cross_validate(clf, tr_spm.transform(df_traintest), df_traintest["target"],
                       cv = split_my5fold.split(df_traintest),  # special 5fold
                       scoring = scoring[TARGET_TYPE],
                       return_estimator = True,
@@ -114,7 +118,7 @@ print(d_cv["test_" + metric])
 # --- Most important variables (importance_cum < 95) model fit ------------------------------------------------------
 
 # Variable importance (on train data!)
-df_varimp_train = calc_varimp_by_permutation(df_train, df_traintest, fit, "target", metr, cate,
+df_varimp_train = calc_varimp_by_permutation(df_train, fit, tr_spm = tr_spm,
                                              target_type = TARGET_TYPE,
                                              b_sample = b_sample, b_all = b_all)
 
@@ -122,13 +126,13 @@ df_varimp_train = calc_varimp_by_permutation(df_train, df_traintest, fit, "targe
 features_top = df_varimp_train.loc[df_varimp_train["importance_cum"] < importance_cut, "feature"].values
 
 # Fit again only on features_top
-X_train_top = CreateSparseMatrix(metr[np.in1d(metr, features_top)], cate[np.in1d(cate, features_top)],
-                                 df_ref = df_traintest).fit_transform(df_train)
+tr_spm_top = CreateSparseMatrix(metr[np.in1d(metr, features_top)], cate[np.in1d(cate, features_top)],
+                                df_ref = df_traintest).fit()
+X_train_top = tr_spm_top.transform(df_train)
 fit_top = clone(clf).fit(X_train_top, df_train["target"])
 
 # Plot performance
-X_test_top = CreateSparseMatrix(metr[np.in1d(metr, features_top)], cate[np.in1d(cate, features_top)],
-                                df_ref = df_traintest).fit_transform(df_test)
+X_test_top = tr_spm_top.transform(df_test)
 yhat_top = scale_predictions(fit_top.predict_proba(X_test_top), b_sample, b_all)
 print(auc(df_test["target"].values, yhat_top))
 plot_all_performances(df_test["target"], yhat_top, target_labels = target_labels, target_type = TARGET_TYPE,
@@ -148,7 +152,7 @@ df_test["abs_residual"] = df_test["residual"].abs()
 df_test["residual"].describe()
 
 # For non-regr tasks one might want to plot it for each target level (df_test.query("target == 0/1"))
-plot_distr(df_test, features[:2],
+plot_distr(df_test, features,
            target = "residual",
            target_type = "REGR",
            ylim = (0,0.1),
@@ -164,7 +168,7 @@ plt.close(fig = "all")
 n_worst = 10
 df_explain = df_test.sort_values("abs_residual", ascending = False).iloc[:n_worst, :]
 yhat_explain = yhat_test[df_explain.index.values]
-df_shap = calc_shap(df_explain, fit, tr_sparse = tr_sparse,
+df_shap = calc_shap(df_explain, fit, tr_spm = tr_spm,
                     target_type = TARGET_TYPE, b_sample = b_sample, b_all = b_all)
 
 # Check
@@ -182,7 +186,8 @@ xgb.plot_importance(fit)
 
 # --- Variable Importance by permuation argument -------------------------------------------------------------------
 # Importance for "total" fit (on test data!)
-df_varimp = calc_varimp_by_permutation(df_test, df_traintest, fit, "target", metr, cate, target_type = TARGET_TYPE,
+df_varimp = calc_varimp_by_permutation(df_test, fit, tr_spm = tr_spm,
+                                       target_type = TARGET_TYPE,
                                        b_sample = b_sample, b_all = b_all)
 topn_features = df_varimp["feature"].values[range(topn)]
 
@@ -192,16 +197,16 @@ df_varimp["Category"] = pd.cut(df_varimp["importance"], [-np.inf, 10, 50, np.inf
 # Crossvalidate Importance: ONLY for topn_vars
 df_varimp_cv = pd.DataFrame()
 for i, (i_train, i_test) in enumerate(split_my5fold.split(df_traintest)):
-    df_tmp = calc_varimp_by_permutation(df_traintest.iloc[i_train, :], df_traintest, d_cv["estimator"][i],
-                                        "target", metr, cate, TARGET_TYPE,
-                                        b_sample, b_all,
+    df_tmp = calc_varimp_by_permutation(df_traintest.iloc[i_train, :], d_cv["estimator"][i], tr_spm = tr_spm,
+                                        target_type = TARGET_TYPE,
+                                        b_sample = b_sample, b_all = b_all,
                                         features = topn_features)
     df_tmp["run"] = i
     df_varimp_cv = df_varimp_cv.append(df_tmp)
 
 # Plot
 plot_variable_importance(df_varimp, mask = df_varimp["feature"].isin(topn_features),
-                         pdf = plotloc + TARGET_TYPE + "_variable_importance.pdf")
+                         pdf = plotloc + "census_variable_importance.pdf")
 # TODO: add cv lines and errorbars
 
 # --- Compare variable importance for train and test (hints to variables prone to overfitting) -------------------------
@@ -216,7 +221,7 @@ sns.barplot("importance_sumnormed", "feature", hue = "fold",
 
 # Calc PD
 df_pd = calc_partial_dependence(df = df_test, df_ref = df_traintest,
-                                fit = fit, metr = metr, cate = cate,
+                                fit = fit, tr_spm = tr_spm,
                                 target_type = TARGET_TYPE, target_labels = target_labels,
                                 b_sample = b_sample, b_all = b_all,
                                 features = topn_features)
@@ -225,7 +230,7 @@ df_pd = calc_partial_dependence(df = df_test, df_ref = df_traintest,
 df_pd_cv = pd.DataFrame()
 for i, (i_train, i_test) in enumerate(split_my5fold.split(df_traintest)):
     df_tmp = calc_partial_dependence(df = df_traintest.iloc[i_train, :], df_ref = df_traintest,
-                                     fit = d_cv["estimator"][i], metr = metr, cate = cate,
+                                     fit = d_cv["estimator"][i], tr_spm = tr_spm,
                                      target_type = TARGET_TYPE, target_labels = target_labels,
                                      b_sample = b_sample, b_all = b_all,
                                      features = topn_features)
@@ -249,10 +254,10 @@ i_best = df_test.sort_values("abs_residual", ascending = True).iloc[:n_select, :
 i_random = df_test.sample(n = 11).index.values
 i_explain = np.unique(np.concatenate([i_worst, i_best, i_random]))
 yhat_explain = yhat_test[i_explain]
-df_explain = df_test.iloc[i_explain, :].reset_index()
+df_explain = df_test.iloc[i_explain, :].reset_index(drop = True)
 
 # Get shap
-df_shap = calc_shap(df_explain, fit, tr_sparse = tr_sparse,
+df_shap = calc_shap(df_explain, fit, tr_spm = tr_spm,
                     target_type = TARGET_TYPE, b_sample = b_sample, b_all = b_all)
 
 # Check

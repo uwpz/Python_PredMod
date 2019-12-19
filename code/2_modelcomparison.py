@@ -21,7 +21,7 @@ from keras.wrappers.scikit_learn import KerasClassifier, KerasRegressor
 #  from sklearn.tree import DecisionTreeRegressor, plot_tree , export_graphviz
 
 # Main parameter
-TARGET_TYPE = "MULTICLASS"
+TARGET_TYPE = "CLASS"
 
 # Specific parameters
 n_jobs = 4
@@ -124,6 +124,27 @@ fit = GridSearchCV(RandomForestRegressor() if TARGET_TYPE == "REGR" else RandomF
 plot_cvresult(fit.cv_results_, metric = metric, x_var = "n_estimators", color_var = "max_features")
 # -> keep around the recommended values: max_features = floor(sqrt(length(features)))
 
+'''
+X = CreateSparseMatrix(metr = metr_standard, cate = cate_standard, df_ref = df_tune).fit_transform(df_tune)
+y = df_tune["target"]
+clf = xgb.XGBClassifier()
+clf.set_params(**{"verbosity": 1})
+for i_train, i_test in split_my1fold_cv.split(df_tune):
+    print(df_tune["fold"].iloc[i_train].describe())
+    print(df_tune["fold"].iloc[i_test].describe())
+    fit = clf(n_estimators = 50).fit(X[i_train], y[i_train])
+    yhat = fit.predict_proba(X[i_test])
+    auc(y[i_test], yhat)
+    scoring[TARGET_TYPE]["auc"](X = X[i_test], estimator = fit, y_true = y[i_test])
+
+    d_grid = {"n_estimators": [x for x in range(100, 3100, 500)], "learning_rate": [0.01],
+              "max_depth": [3], "min_child_weight": [5, 10]}
+    n_estimators = d_grid.pop("n_estimators")
+    from itertools import product
+    df_grid = (pd.DataFrame(product(*d_grid.values()), columns = d_grid.keys()))
+    df_grid.iloc[0, :].to_dict()
+'''
+
 
 # XGBoost
 fit = GridSearchCV(xgb.XGBRegressor(verbosity = 0) if TARGET_TYPE == "REGR" else xgb.XGBClassifier(verbosity = 0),
@@ -137,6 +158,7 @@ fit = GridSearchCV(xgb.XGBRegressor(verbosity = 0) if TARGET_TYPE == "REGR" else
                    n_jobs = n_jobs) \
     .fit(CreateSparseMatrix(metr = metr_standard, cate = cate_standard, df_ref = df_tune).fit_transform(df_tune),
          df_tune["target"])
+pd.DataFrame(fit.cv_results_)
 plot_cvresult(fit.cv_results_, metric = metric,
               x_var = "n_estimators", color_var = "max_depth", column_var = "min_child_weight")
 # -> keep around the recommended values: max_depth = 6, shrinkage = 0.01, n.minobsinnode = 10

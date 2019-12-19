@@ -31,6 +31,7 @@ if TARGET_TYPE == "REGR":
     cutoff_varimp = 0.52
     color = None
 
+
 # ######################################################################################################################
 # ETL
 # ######################################################################################################################
@@ -62,6 +63,7 @@ if TARGET_TYPE =="REGR":
 # "Save" original data
 df = df_orig.copy()
 
+
 # --- Read metadata (Project specific) -----------------------------------------------------------------------------
 
 if TARGET_TYPE == "CLASS":
@@ -76,6 +78,7 @@ print(setdiff(df_meta.loc[df_meta["category"] == "orig", "variable"].values, df.
 # Filter on "ready"
 df_meta_sub = df_meta.loc[df_meta["status"].isin(["ready", "derive"])].reset_index()
 
+
 # --- Feature engineering -----------------------------------------------------------------------------------------
 
 if TARGET_TYPE == "CLASS":
@@ -88,6 +91,7 @@ if TARGET_TYPE in ["REGR", "MULTICLASS"]:
 
 # Check
 print(setdiff(df_meta["variable"].values, df.columns.values))
+
 
 # --- Define target and train/test-fold ----------------------------------------------------------------------------
 
@@ -110,6 +114,7 @@ df["encode_flag"] = df["fold"].replace({"train": 0, "test": 0, "util": 1})  # Us
 
 # Define the id
 df["id"] = np.arange(len(df)) + 1
+
 
 # ######################################################################################################################
 # Metric variables: Explore and adapt
@@ -135,6 +140,7 @@ print(create_values_df(df[metr + "_BINNED"], 11))
 
 # Get binned variables with just 1 bin (removed later)
 onebin = (metr + "_BINNED")[df[metr + "_BINNED"].nunique() == 1]
+
 
 # --- Missings + Outliers + Skewness ---------------------------------------------------------------------------------
 
@@ -162,6 +168,7 @@ df[tolog + "_LOG_"] = df[tolog].apply(lambda x: np.log(x - min(0, np.min(x)) + 1
 metr = np.where(np.isin(metr, tolog), metr + "_LOG_", metr)  # adapt metadata (keep order)
 df.rename(columns = dict(zip(tolog + "_BINNED", tolog + "_LOG_" + "_BINNED")), inplace = True)  # adapt binned version
 
+
 # --- Final variable information ------------------------------------------------------------------------------------
 
 # Univariate variable importance
@@ -172,6 +179,7 @@ print(varimp_metr)
 plot_distr(df, features = np.column_stack((metr, metr + "_BINNED")).ravel(), target_type = TARGET_TYPE,
            varimp = varimp_metr, color = color, ylim = ylim,
            ncol = 4, nrow = 2, w = 24, h = 18, pdf = plotloc + TARGET_TYPE + "_distr_metr_final.pdf")
+
 
 # --- Removing variables -------------------------------------------------------------------------------------------
 
@@ -184,6 +192,7 @@ df[metr].describe()
 plot_corr(df, metr, cutoff = cutoff_corr, pdf = plotloc + TARGET_TYPE + "_corr_metr.pdf")
 remove = ["xxx", "xxx"]
 metr = setdiff(metr, remove)
+
 
 # --- Time/fold depedency --------------------------------------------------------------------------------------------
 
@@ -198,6 +207,7 @@ plot_distr(df, metr_toprint, target = "fold_num", target_type = "CLASS",
            varimp = varimp_metr_fold,
            ncol = 2, nrow = 2, w = 12, h = 8, pdf = plotloc + TARGET_TYPE + "_distr_metr_folddep.pdf")
 
+
 # --- Missing indicator and imputation (must be done at the end of all processing)------------------------------------
 
 miss = metr[df[metr].isnull().any().values]  # alternative: [x for x in metr if df[x].isnull().any()]
@@ -209,9 +219,11 @@ df = DfRandomImputer(features = miss).fit_transform(df)
 # df = DfSimpleImputer(features=miss, strategy="median").fit_transform(df)
 df[miss].isnull().sum()
 
+
 # ######################################################################################################################
 # Categorical  variables: Explore and adapt
 # ######################################################################################################################
+
 
 # --- Define categorical covariates -----------------------------------------------------------------------------------
 
@@ -227,6 +239,7 @@ else:
     tmp = ["Overall_Qual", "Overall_Cond", "Bsmt_Full_Bath", "Full_Bath", "Half_Bath", "Bedroom_AbvGr",
            "TotRms_AbvGrd", "Fireplaces", "Garage_Cars"]
     df[tmp] = df[tmp].apply(lambda x: x.str.zfill(2))
+
 
 # --- Handling factor values ----------------------------------------------------------------------------------------
 
@@ -259,6 +272,7 @@ plot_distr(df, np.append(cate, ["MISS_" + miss]), target_type = TARGET_TYPE,
            nrow = 2, ncol = 3, w = 18, h = 12,
            pdf = plotloc + TARGET_TYPE + "_distr_cate.pdf")  # maybe plot miss separately
 
+
 # --- Removing variables ---------------------------------------------------------------------------------------------
 
 # Remove leakage variables
@@ -269,6 +283,7 @@ if TARGET_TYPE == "CLASS":
 # Remove highly/perfectly (>=99%) correlated (the ones with less levels!)
 plot_corr(df, np.append(cate, ["MISS_" + miss]), cutoff = cutoff_corr, n_cluster = 5,  # maybe plot miss separately
           pdf = plotloc + TARGET_TYPE + "_corr_cate.pdf")
+
 
 # --- Time/fold depedency --------------------------------------------------------------------------------------------
 
@@ -281,6 +296,7 @@ cate_toprint = varimp_cate_fold[varimp_cate_fold > cutoff_varimp].index.values
 plot_distr(df, cate_toprint, target = "fold_num", target_type = "CLASS",
            varimp = varimp_cate_fold,
            ncol = 2, nrow = 2, w = 12, h = 8, pdf = plotloc + TARGET_TYPE + "_distr_cate_folddep.pdf")
+
 
 ########################################################################################################################
 # Prepare final data
@@ -295,6 +311,7 @@ if TARGET_TYPE == "MULTICLASS":
     target_labels = tmp.classes_
 else:
     target_labels = "target"
+
 
 # --- Define final features ----------------------------------------------------------------------------------------
 
@@ -315,9 +332,11 @@ all_features = np.unique(np.concatenate([metr_standard, cate_standard, metr_binn
 setdiff(all_features, df.columns.values.tolist())
 setdiff(df.columns.values.tolist(), all_features)
 
+
 # --- Remove burned data ----------------------------------------------------------------------------------------
 
 df = df.query("fold != 'util'").reset_index(drop = True)
+
 
 # --- Save image ----------------------------------------------------------------------------------------------------
 

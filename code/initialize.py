@@ -65,8 +65,6 @@ twocol = ["red", "green"]
 threecol = ["green", "yellow", "red"]
 colors = pd.Series(dict(mcolors.BASE_COLORS, **mcolors.CSS4_COLORS))
 colors = colors.iloc[np.setdiff1d(np.arange(len(colors)), [6, 7, 8, 9, 12, 13, 14, 15, 16, 17, 26])]
-
-
 # sel = np.arange(50);  plt.bar(sel.astype("str"), 1, color=colors[sel])
 
 
@@ -326,9 +324,10 @@ def plot_distr(df, features,
                 # Calc scale
                 if ylim is not None:
                     ax_act.set_ylim(ylim)
-                    tmp_scale = (ylim[1] - ylim[0]) / (np.max(df[target]) - np.min(df[target]))
-                else:
-                    tmp_scale = 1
+                    ymin = ylim[0]
+                    ymax = ylim[1]
+                    xmin = df[feature_act].min()
+                    xmax = df[feature_act].max()
 
                 # Calc colormap
                 tmp_cmap = mcolors.LinearSegmentedColormap.from_list("gr_bl_yl_rd",
@@ -337,7 +336,7 @@ def plot_distr(df, features,
                 # Hexbin plot
                 ax_act.set_facecolor('0.98')
                 p = ax_act.hexbin(df[feature_act], df[target],
-                                  gridsize = (int(50 * tmp_scale), 50),
+                                  extent = None if ylim is None else (xmin, xmax, ymin, ymax),
                                   cmap = tmp_cmap)
                 plt.colorbar(p, ax = ax_act)
                 if varimp is not None:
@@ -369,7 +368,7 @@ def plot_distr(df, features,
                 inset_ax.set_axis_off()
                 inset_ax.get_shared_x_axes().join(ax_act, inset_ax)
                 sns.boxplot(x = df.loc[i_bool, feature_act], palette = ["grey"], ax = inset_ax)
-                inset_ax.set_xlabel(feature_act + " (NA: " +
+                ax_act.set_xlabel(feature_act + " (NA: " +
                                     str(df[feature_act].isnull().mean().round(3) * 100) +
                                     "%)")  # set it again!
 
@@ -428,7 +427,8 @@ def plot_distr(df, features,
                     # Remove unused axes
                     ax.flat[k].axis("off")
             fig.tight_layout()
-            pdf_pages.savefig(fig)
+            if pdf is not None:
+                pdf_pages.savefig(fig)
 
     # Close pdf
     if pdf is not None:
@@ -922,13 +922,21 @@ def plot_all_performances(y, yhat, target_labels = None, target_type = "CLASS", 
 
 
 # Variable importance
-def calc_varimp_by_permutation(df, df_ref, fit,
-                               target, metr, cate,
+def calc_varimp_by_permutation(df, fit, tr_spm = None,
+                               target = "target", metr = None, cate = None, df_ref = None,
                                target_type = "CLASS",
                                b_sample = None, b_all = None,
                                features = None,
                                random_seed = 999,
                                n_jobs = 4):
+
+    # Define sparse matrix transformer if None, otherwise get information of it
+    if tr_spm is None:
+        tr_spm = CreateSparseMatrix(metr = metr, cate = cate, df_ref = df_ref).fit()
+    else:
+        metr = tr_spm.metr
+        cate = tr_spm.cate
+
     # df=df_train;  df_ref=df; target = "target"
     all_features = np.append(metr, cate)
     if features is None:
@@ -936,12 +944,9 @@ def calc_varimp_by_permutation(df, df_ref, fit,
 
     # Original performance
     if target_type in ["CLASS", "MULTICLASS"]:
-        perf_orig = auc(df[target],
-                        scale_predictions(fit.predict_proba(CreateSparseMatrix(metr, cate, df_ref).fit_transform(df)),
-                                          b_sample, b_all))
+        perf_orig = auc(df[target], scale_predictions(fit.predict_proba(tr_spm.transform(df)), b_sample, b_all))
     else:
-        perf_orig = spear(df[target],
-                          fit.predict(CreateSparseMatrix(metr, cate, df_ref).fit_transform(df)))
+        perf_orig = spear(df[target], fit.predict(tr_spm.transform(df)))
 
     # Performance per variable after permutation
     np.random.seed(random_seed)
@@ -953,12 +958,10 @@ def calc_varimp_by_permutation(df, df_ref, fit,
         df_perm[feature] = df_perm[feature].values[i_perm]
         if target_type in ["CLASS", "MULTICLASS"]:
             perf = auc(df_perm[target],
-                       scale_predictions(fit.predict_proba(CreateSparseMatrix(metr, cate, df_ref)
-                                                           .fit_transform(df_perm)),
-                                         b_sample, b_all))
+                       scale_predictions(fit.predict_proba(tr_spm.transform(df_perm)), b_sample, b_all))
         elif target_type == "REGR":
             perf = spear(df_perm[target],
-                         fit.predict(CreateSparseMatrix(metr, cate, df_ref).fit_transform(df_perm)))
+                         fit.predict(tr_spm.transform(df_perm)))
         return perf
 
     perf = Parallel(n_jobs = n_jobs, max_nbytes = '100M')(delayed(run_in_parallel)(df, feature)
@@ -976,6 +979,7 @@ def calc_varimp_by_permutation(df, df_ref, fit,
 
 # Plot variable importance
 def plot_variable_importance(df_varimp, mask = None, w = 18, h = 12, pdf = None):
+
     # Prepare
     n_features = len(df_varimp)
     if mask is not None:
@@ -996,8 +1000,8 @@ def plot_variable_importance(df_varimp, mask = None, w = 18, h = 12, pdf = None)
 
 
 # Partial dependence
-def calc_partial_dependence(df, df_ref, fit,
-                            metr, cate,
+def calc_partial_dependence(df, fit, df_ref, tr_spm = None,
+                            metr = None, cate = None,
                             target_type = "CLASS", target_labels = None,
                             b_sample = None, b_all = None,
                             features = None,
@@ -1005,6 +1009,19 @@ def calc_partial_dependence(df, df_ref, fit,
                             n_jobs = 4):
     # df=df_test;  df_ref=df_traintest; target = "target"; target_type=TARGET_TYPE; features=np.append(metr[0],cate[0]);
     # quantiles = np.arange(0, 1.1, 0.1);n_jobs=4
+
+    # Define sparse matrix transformer if None, otherwise get information of it
+    if tr_spm is None:
+        tr_spm = CreateSparseMatrix(metr = metr, cate = cate, df_ref = df_ref).fit()
+    else:
+        metr = tr_spm.metr
+        cate = tr_spm.cate
+
+    # Quantile and and values calculation
+    d_quantiles = df[metr].quantile(quantiles).to_dict(orient = "list")
+    d_categories = tr_spm._d_categories
+
+    # Set features to calculate importance for
     all_features = np.append(metr, cate)
     if features is None:
         features = all_features
@@ -1012,9 +1029,9 @@ def calc_partial_dependence(df, df_ref, fit,
     def run_in_parallel(feature):
         # feature = features[0]
         if feature in metr:
-            values = df_ref[feature].quantile(quantiles)
+            values = np.array(d_quantiles[feature])
         else:
-            values = np.sort(df_ref[feature].unique())
+            values = d_categories[feature]
 
         df_tmp = df.copy()  # save original data
 
@@ -1023,21 +1040,19 @@ def calc_partial_dependence(df, df_ref, fit,
             # value=values[0]
             df_tmp[feature] = value
             if target_type == "CLASS":
-                yhat_mean = np.mean(scale_predictions(fit.predict_proba(CreateSparseMatrix(metr, cate, df_ref).
-                                                                        fit_transform(df_tmp)),
+                yhat_mean = np.mean(scale_predictions(fit.predict_proba(tr_spm.transform(df_tmp)),
                                                       b_sample, b_all), axis = 0)
                 df_pd_feature = pd.concat([df_pd_feature,
                                            pd.DataFrame({"feature": feature, "value": str(value),
                                                          "target": "target", "yhat_mean": yhat_mean[1]}, index = [0])])
             elif target_type == "MULTICLASS":
-                yhat_mean = np.mean(scale_predictions(fit.predict_proba(CreateSparseMatrix(metr, cate, df_ref).
-                                                                        fit_transform(df_tmp)),
+                yhat_mean = np.mean(scale_predictions(fit.predict_proba(tr_spm.transform(df_tmp)),
                                                       b_sample, b_all), axis = 0)
                 df_pd_feature = pd.concat([df_pd_feature,
                                            pd.DataFrame({"feature": feature, "value": str(value),
                                                          "target": target_labels, "yhat_mean": yhat_mean})])
             else:  # "REGR"
-                yhat_mean = [np.mean(fit.predict(CreateSparseMatrix(metr, cate, df_ref).fit_transform(df_tmp)))]
+                yhat_mean = [np.mean(fit.predict(tr_spm.transform(df_tmp)))]
                 df_pd_feature = pd.concat([df_pd_feature,
                                            pd.DataFrame({"feature": feature, "value": str(value),
                                                          "target": "target", "yhat_mean": yhat_mean}, index = [0])])
@@ -1054,14 +1069,16 @@ def calc_partial_dependence(df, df_ref, fit,
 
 # Calculate shapely values
 # noinspection PyPep8Naming
-def calc_shap(df_explain, fit, tr_sparse = None, metr = None, cate = None, df_ref = None,
+def calc_shap(df_explain, fit, tr_spm = None, metr = None, cate = None, df_ref = None,
               target_type = "CLASS", b_sample = None, b_all = None):
     # target_type = TARGET_TYPE;
 
+
+
     # Calc X_explain:
-    if tr_sparse is None:
-        tr_sparse = CreateSparseMatrix(metr = metr, cate = cate, df_ref = df_ref)
-    X_explain = tr_sparse.transform(df_explain)
+    if tr_spm is None:
+        tr_spm = CreateSparseMatrix(metr = metr, cate = cate, df_ref = df_ref).fit()
+    X_explain = tr_spm.transform(df_explain)
 
     # Get shap values
     explainer = shap.TreeExplainer(fit)
@@ -1081,7 +1098,7 @@ def calc_shap(df_explain, fit, tr_sparse = None, metr = None, cate = None, df_re
             .reset_index(drop = True)  # clear index
             .reset_index().rename(columns = {"index": "row_id"})  # add row_id
             .melt(id_vars = "row_id", var_name = "position", value_name = "shap_value")  # rotate
-            .merge(tr_sparse.df_map, how = "left", on = "position")  # add variable name to position
+            .merge(tr_spm.df_map, how = "left", on = "position")  # add variable name to position
             .groupby(["row_id", "variable"])["shap_value"].sum().reset_index()  # aggregate cate features
             .merge(df_explain.reset_index()
                    .rename(columns = {"index": "row_id"})
@@ -1202,7 +1219,6 @@ class MapToomany(BaseEstimator, TransformerMixin):
 class TargetEncoding(BaseEstimator, TransformerMixin):
     def __init__(self, features, encode_flag_column = "use_for_encoding", target = "target",
                  remove_burned_data = False):
-        #pdb.set_trace()
         self.features = features
         self.encode_flag_column = encode_flag_column
         self.target = target
@@ -1211,7 +1227,6 @@ class TargetEncoding(BaseEstimator, TransformerMixin):
         self._statistics = None
 
     def fit(self, df, *_):
-        pdb.set_trace()
         if df[self.target].nunique() > 2:
             # Take majority class in case of MULTICLASS target
             df["tmp"] = np.where(df[self.target] == df[self.target].value_counts().values[0], 1, 0)
@@ -1227,7 +1242,6 @@ class TargetEncoding(BaseEstimator, TransformerMixin):
         return self
 
     def transform(self, df):
-        #pdb.set_trace()
         df[self.features + "_ENCODED"] = df[self.features].apply(lambda x: x.map(self._d_map[x.name])
                                                                  .fillna(np.median(list(self._d_map[x.name].values()))))
         if self.remove_burned_data:
