@@ -8,8 +8,6 @@ from initialize import *
 
 # Specific libraries
 from sklearn.model_selection import cross_validate
-from sklearn.base import clone
-import xgboost as xgb
 
 # Main parameter
 TARGET_TYPE = "MULTICLASS"
@@ -46,7 +44,7 @@ for key, val in d_pick.items():
 # Features for xgboost
 metr = metr_standard
 cate = cate_standard
-features = np.append(metr, cate)
+features = np.append([metr, cate])
 
 
 # ######################################################################################################################
@@ -61,6 +59,7 @@ xgb_param = dict(n_estimators = 1100, learning_rate = 0.01,
                  verbosity = 0,
                  n_jobs = n_jobs)
 clf = xgb.XGBRegressor(**xgb_param) if TARGET_TYPE == "REGR" else xgb.XGBClassifier(**xgb_param)
+
 
 # --- Sample data ----------------------------------------------------------------------------------------------------
 
@@ -90,6 +89,7 @@ for i_train, i_test in split_my5fold.split(df_traintest):
     print("TRAIN-fold:", df_traintest["fold"].iloc[i_train].value_counts())
     print("TEST-fold:", df_traintest["fold"].iloc[i_test].value_counts())
     print("##########")
+
 
 # ######################################################################################################################
 # Performance
@@ -125,11 +125,12 @@ plot_all_performances(df_test["target"], yhat_test, target_labels = target_label
 # --- Check performance for crossvalidated fits ---------------------------------------------------------------------
 d_cv = cross_validate(clf, tr_spm.transform(df_traintest), df_traintest["target"],
                       cv = split_my5fold.split(df_traintest),  # special 5fold
-                      scoring = scoring[TARGET_TYPE],
+                      scoring = d_scoring[TARGET_TYPE],
                       return_estimator = True,
                       n_jobs = 4)
 # Performance
 print(d_cv["test_" + metric])
+
 
 # --- Most important variables (importance_cum < 95) model fit ------------------------------------------------------
 # Variable importance (on train data!)
@@ -215,6 +216,7 @@ check_shap(df_shap, yhat_explain, target_type = TARGET_TYPE)
 # --- Default Variable Importance: uses gain sum of all trees ----------------------------------------------------------
 xgb.plot_importance(fit)
 
+
 # --- Variable Importance by permuation argument -------------------------------------------------------------------
 # Importance for "total" fit (on test data!)
 df_varimp = calc_varimp_by_permutation(df_test, fit, tr_spm = tr_spm,
@@ -239,6 +241,7 @@ for i, (i_train, i_test) in enumerate(split_my5fold.split(df_traintest)):
 plot_variable_importance(df_varimp, mask = df_varimp["feature"].isin(topn_features),
                          pdf = plotloc + TARGET_TYPE + "_variable_importance.pdf")
 # TODO: add cv lines and errorbars
+
 
 # --- Compare variable importance for train and test (hints to variables prone to overfitting) -------------------------
 fig, ax = plt.subplots(1, 1)
@@ -295,7 +298,6 @@ df_shap = calc_shap(df_explain, fit, tr_spm = tr_spm,
 check_shap(df_shap, yhat_explain, target_type = TARGET_TYPE)
 
 # Plot: TODO
-
 
 plt.close("all")
 

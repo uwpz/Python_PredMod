@@ -7,11 +7,8 @@ from initialize import *
 # sys.path.append(os.getcwd() + "\\code")  # not needed if code is marked as "source" in pycharm
 
 # Specific libraries
-from sklearn.model_selection import *
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor  # , GradientBoostingClassifier
 from sklearn.linear_model import SGDClassifier, SGDRegressor, LogisticRegression  # , ElasticNet
-import xgboost as xgb
-import lightgbm as lgbm
 from keras.models import Sequential
 from keras.layers import Dense, BatchNormalization, Dropout
 from keras.regularizers import l2
@@ -21,7 +18,7 @@ from keras.wrappers.scikit_learn import KerasClassifier, KerasRegressor
 #  from sklearn.tree import DecisionTreeRegressor, plot_tree , export_graphviz
 
 # Main parameter
-TARGET_TYPE = "CLASS"
+TARGET_TYPE = "MULTICLASS"
 
 # Specific parameters
 n_jobs = 4
@@ -40,6 +37,7 @@ for key, val in d_pick.items():
 # Scale "metr_enocded" features for DL (Tree-based are not influenced by this Trafo)
 df[metr_encoded] = (df[metr_encoded] - df[metr_encoded].min()) / (df[metr_encoded].max() - df[metr_encoded].min())
 df[metr_encoded].describe()
+
 
 # ######################################################################################################################
 # # Test an algorithm (and determine parameter grid)
@@ -60,6 +58,7 @@ if TARGET_TYPE in ["CLASS", "MULTICLASS"]:
 else:  # "REGR"
     df_tune = df.sample(n = min(df.shape[0], int(5e3))).reset_index(drop = True)
 
+
 # --- Define some splits -------------------------------------------------------------------------------------------
 
 # split_index = PredefinedSplit(df_tune["fold"].map({"train": -1, "test": 0}).values)
@@ -69,112 +68,111 @@ split_my5fold_cv = TrainTestSep(5)
 split_my5fold_boot = TrainTestSep(5, "bootstrap")
 '''
 df_tune["fold"].value_counts()
-split_my5fold = TrainTestSep(n_splits=5, sample_type="cv")
-iter_split = split_my5fold.split(df_tune)
-i_train, i_test = next(iter_split)
+mysplit = split_my5fold_cv.split(df_tune)
+i_train, i_test = next(mysplit)
 df_tune["fold"].iloc[i_train].describe()
 df_tune["fold"].iloc[i_test].describe()
 i_test.sort()
 i_test
 '''
 
+
 # --- Fits -----------------------------------------------------------------------------------------------------------
 
 # Lasso / Elastic Net
-fit = GridSearchCV(SGDRegressor(penalty = "ElasticNet", warm_start = True) if TARGET_TYPE == "REGR" else
-                   SGDClassifier(loss = "log", penalty = "ElasticNet", warm_start = True),  # , tol=1e-2
-                   {"alpha": [2 ** x for x in range(-4, -12, -1)],
-                    "l1_ratio": [1]},
-                   cv = split_my1fold_cv.split(df_tune),
-                   refit = False,
-                   scoring = scoring[TARGET_TYPE],
-                   return_train_score = True,
-                   n_jobs = n_jobs) \
-    .fit(CreateSparseMatrix(metr = metr_binned, cate = cate_binned, df_ref = df_tune).fit_transform(df_tune),
-         df_tune["target"])
+fit = (GridSearchCV(SGDRegressor(penalty = "ElasticNet", warm_start = True) if TARGET_TYPE == "REGR" else
+                    SGDClassifier(loss = "log", penalty = "ElasticNet", warm_start = True),  # , tol=1e-2
+                    {"alpha": [2 ** x for x in range(-4, -12, -1)],
+                     "l1_ratio": [1]},
+                    cv = split_my1fold_cv.split(df_tune),
+                    refit = False,
+                    scoring = d_scoring[TARGET_TYPE],
+                    return_train_score = True,
+                    n_jobs = n_jobs)
+       .fit(CreateSparseMatrix(metr = metr_binned, cate = cate_binned, df_ref = df_tune).fit_transform(df_tune),
+            df_tune["target"]))
 plot_cvresult(fit.cv_results_, metric = metric, x_var = "alpha", color_var = "l1_ratio")
+pd.DataFrame(fit.cv_results_)
 
 if TARGET_TYPE in ["CLASS", "MULTICLASS"]:
-    fit = GridSearchCV(LogisticRegression(penalty = "l1", fit_intercept = True, solver = "liblinear"),
-                       {"C": [2 ** x for x in range(2, -8, -1)]},
-                       cv = split_my1fold_cv.split(df_tune),
-                       refit = False,
-                       scoring = scoring[TARGET_TYPE],
-                       return_train_score = True,
-                       n_jobs = n_jobs) \
-        .fit(CreateSparseMatrix(metr = metr_binned, cate = cate_binned, df_ref = df_tune).fit_transform(df_tune),
-             df_tune["target"])
+    fit = (GridSearchCV(LogisticRegression(penalty = "l1", fit_intercept = True, solver = "liblinear"),
+                        {"C": [2 ** x for x in range(2, -8, -1)]},
+                        cv = split_my1fold_cv.split(df_tune),
+                        refit = False,
+                        scoring = d_scoring[TARGET_TYPE],
+                        return_train_score = True,
+                        n_jobs = n_jobs)
+           .fit(CreateSparseMatrix(metr = metr_binned, cate = cate_binned, df_ref = df_tune).fit_transform(df_tune),
+                df_tune["target"]))
     plot_cvresult(fit.cv_results_, metric = metric, x_var = "C")
 
 # -> keep l1_ratio=1 to have a full Lasso
 
 
 # Random Forest
-fit = GridSearchCV(RandomForestRegressor() if TARGET_TYPE == "REGR" else RandomForestClassifier(),
-                   {"n_estimators": [10, 20],
-                    "max_features": [x for x in range(1, len(metr_standard) + len(cate_standard), 5)]},
-                   cv = split_my1fold_cv.split(df_tune),
-                   refit = False,
-                   scoring = scoring[TARGET_TYPE],
-                   return_train_score = True,
-                   # use_warm_start=["n_estimators"],
-                   n_jobs = n_jobs) \
-    .fit(CreateSparseMatrix(metr = metr_standard, cate = cate_standard, df_ref = df_tune).fit_transform(df_tune),
-         df_tune["target"])
+fit = (GridSearchCV(RandomForestRegressor() if TARGET_TYPE == "REGR" else RandomForestClassifier(),
+                    {"n_estimators": [10, 20],
+                     "max_features": [x for x in range(1, metr_standard.size + cate_standard.size, 5)]},
+                    cv = split_my1fold_cv.split(df_tune),
+                    refit = False,
+                    scoring = d_scoring[TARGET_TYPE],
+                    return_train_score = True,
+                    # use_warm_start=["n_estimators"],
+                    n_jobs = n_jobs)
+       .fit(CreateSparseMatrix(
+    metr = metr_standard, cate = cate_standard, df_ref = df_tune).fit_transform(df_tune),
+         df_tune["target"]))
 plot_cvresult(fit.cv_results_, metric = metric, x_var = "n_estimators", color_var = "max_features")
 # -> keep around the recommended values: max_features = floor(sqrt(length(features)))
 
-'''
-X = CreateSparseMatrix(metr = metr_standard, cate = cate_standard, df_ref = df_tune).fit_transform(df_tune)
-y = df_tune["target"]
-clf = xgb.XGBClassifier()
-clf.set_params(**{"verbosity": 1})
-for i_train, i_test in split_my1fold_cv.split(df_tune):
-    print(df_tune["fold"].iloc[i_train].describe())
-    print(df_tune["fold"].iloc[i_test].describe())
-    fit = clf(n_estimators = 50).fit(X[i_train], y[i_train])
-    yhat = fit.predict_proba(X[i_test])
-    auc(y[i_test], yhat)
-    scoring[TARGET_TYPE]["auc"](X = X[i_test], estimator = fit, y_true = y[i_test])
-
-    d_grid = {"n_estimators": [x for x in range(100, 3100, 500)], "learning_rate": [0.01],
-              "max_depth": [3], "min_child_weight": [5, 10]}
-    n_estimators = d_grid.pop("n_estimators")
-    from itertools import product
-    df_grid = (pd.DataFrame(product(*d_grid.values()), columns = d_grid.keys()))
-    df_grid.iloc[0, :].to_dict()
-'''
-
 
 # XGBoost
-fit = GridSearchCV(xgb.XGBRegressor(verbosity = 0) if TARGET_TYPE == "REGR" else xgb.XGBClassifier(verbosity = 0),
-                   {"n_estimators": [x for x in range(100, 3100, 500)], "learning_rate": [0.01],
-                    "max_depth": [3], "min_child_weight": [5]},
-                   cv = split_my1fold_cv.split(df_tune),
-                   refit = False,
-                   scoring = scoring[TARGET_TYPE],
-                   return_train_score = True,
-                   # use_warm_start="n_estimators",
-                   n_jobs = n_jobs) \
-    .fit(CreateSparseMatrix(metr = metr_standard, cate = cate_standard, df_ref = df_tune).fit_transform(df_tune),
-         df_tune["target"])
+start = time.time()
+fit = (GridSearchCV_xlgb(xgb.XGBRegressor(verbosity = 0) if TARGET_TYPE == "REGR" else xgb.XGBClassifier(verbosity = 0),
+                         {"n_estimators": [x for x in range(100, 3100, 500)], "learning_rate": [0.01],
+                          "max_depth": [3], "min_child_weight": [5]},
+                         cv = split_my1fold_cv.split(df_tune),
+                         refit = False,
+                         scoring = d_scoring[TARGET_TYPE],
+                         return_train_score = True,
+                         n_jobs = n_jobs)
+       .fit(CreateSparseMatrix(metr = metr_standard, cate = cate_standard, df_ref = df_tune).fit_transform(df_tune),
+            df_tune["target"]))
+print(time.time()-start)
+'''
+fit = myGridSearchCV(xgb.XGBRegressor(verbosity = 0) if TARGET_TYPE == "REGR" else xgb.XGBClassifier(verbosity = 0),
+                     X = (CreateSparseMatrix(metr = metr_standard, cate = cate_standard, df_ref = df_tune)
+                          .fit_transform(df_tune)),
+                     y = df_tune["target"],
+                     param_grid = {"n_estimators": [x for x in range(100, 300, 100)], "learning_rate": [0.01],
+                                   "max_depth": [3, 6], "min_child_weight": [5, 10]},
+                     cv = split_my1fold_cv.split(df_tune),
+                     scoring = d_scoring[TARGET_TYPE],
+                     refit = "auc",
+                     return_train_score = True,
+                     n_jobs = 4)
+'''
 pd.DataFrame(fit.cv_results_)
 plot_cvresult(fit.cv_results_, metric = metric,
               x_var = "n_estimators", color_var = "max_depth", column_var = "min_child_weight")
+
+
 # -> keep around the recommended values: max_depth = 6, shrinkage = 0.01, n.minobsinnode = 10
 
 
 # LightGBM
-fit = GridSearchCV(lgbm.LGBMRegressor() if TARGET_TYPE == "REGR" else lgbm.LGBMClassifier(),
-                   {"n_estimators": [x for x in range(100, 3100, 500)], "learning_rate": [0.01],
-                    "num_leaves": [32], "min_child_samples": [10]},
-                   cv = split_my1fold_cv.split(df_tune),
-                   refit = False,
-                   scoring = scoring[TARGET_TYPE],
-                   return_train_score = True,
-                   n_jobs = n_jobs) \
-    .fit(df_tune[metr_encoded], df_tune["target"],
-         categorical_feature = [x for x in metr_encoded.tolist() if "_ENCODED" in x])
+start = time.time()
+fit = (GridSearchCV_xlgb(lgbm.LGBMRegressor() if TARGET_TYPE == "REGR" else lgbm.LGBMClassifier(),
+                         {"n_estimators": [x for x in range(100, 3100, 500)], "learning_rate": [0.01],
+                          "num_leaves": [32], "min_child_samples": [10]},
+                         cv = split_my1fold_cv.split(df_tune),
+                         refit = False,
+                         scoring = d_scoring[TARGET_TYPE],
+                         return_train_score = True,
+                         n_jobs = n_jobs)
+       .fit(df_tune[metr_encoded], df_tune["target"],
+            categorical_feature = [x for x in metr_encoded.tolist() if "_ENCODED" in x]))
+print(time.time()-start)
 plot_cvresult(fit.cv_results_, metric = metric,
               x_var = "n_estimators", color_var = "num_leaves", column_var = "min_child_samples")
 
@@ -221,31 +219,32 @@ def keras_model(input_dim, output_dim, target_type,
 
 
 # Fit
-fit = GridSearchCV(KerasRegressor(build_fn = keras_model,
-                                  input_dim = len(metr_encoded),
-                                  output_dim = 1,
-                                  target_type = TARGET_TYPE,
-                                  verbose = 0) if TARGET_TYPE == "REGR" else
-                   KerasClassifier(build_fn = keras_model,
-                                   input_dim = len(metr_encoded),
-                                   output_dim = 1 if TARGET_TYPE == "CLASS" else len(target_labels),
+fit = (GridSearchCV(KerasRegressor(build_fn = keras_model,
+                                   input_dim = metr_encoded.size,
+                                   output_dim = 1,
                                    target_type = TARGET_TYPE,
-                                   verbose = 0),
-                   {"size": ["10"],
-                    "lambdah": [1e-8], "dropout": [None],
-                    "batch_size": [40], "lr": [1e-3],
-                    "batch_normalization": [True],
-                    "activation": ["relu", "elu"],
-                    "epochs": [2, 5, 10, 15]},
-                   cv = split_my1fold_cv.split(df_tune),
-                   refit = False,
-                   scoring = scoring[TARGET_TYPE],
-                   return_train_score = False,
-                   n_jobs = n_jobs) \
-    .fit(CreateSparseMatrix(metr = metr_encoded, df_ref = df_tune).fit_transform(df_tune),
-         pd.get_dummies(df_tune["target"]) if TARGET_TYPE == "MULTICLASS" else df_tune["target"])
+                                   verbose = 0) if TARGET_TYPE == "REGR" else
+                    KerasClassifier(build_fn = keras_model,
+                                    input_dim = metr_encoded.size,
+                                    output_dim = 1 if TARGET_TYPE == "CLASS" else target_labels.size,
+                                    target_type = TARGET_TYPE,
+                                    verbose = 0),
+                    {"size": ["10"],
+                     "lambdah": [1e-8], "dropout": [None],
+                     "batch_size": [40], "lr": [1e-3],
+                     "batch_normalization": [True],
+                     "activation": ["relu", "elu"],
+                     "epochs": [2, 5, 10, 15]},
+                    cv = split_my1fold_cv.split(df_tune),
+                    refit = False,
+                    scoring = d_scoring[TARGET_TYPE],
+                    return_train_score = False,
+                    n_jobs = n_jobs)
+       .fit(CreateSparseMatrix(metr = metr_encoded, df_ref = df_tune).fit_transform(df_tune),
+            pd.get_dummies(df_tune["target"]) if TARGET_TYPE == "MULTICLASS" else df_tune["target"]))
 plot_cvresult(fit.cv_results_, metric = metric, x_var = "epochs", color_var = "lambdah",
               column_var = "activation", row_var = "size")
+
 
 # ######################################################################################################################
 # Evaluate generalization gap
@@ -261,18 +260,20 @@ param_grid = {"n_estimators": [x for x in range(100, 1100, 200)], "learning_rate
               "gamma": [10]}
 
 # Calc generalization gap
-fit = GridSearchCV(xgb.XGBRegressor(verbosity = 0) if TARGET_TYPE == "REGR" else xgb.XGBClassifier(verbosity = 0),
-                   param_grid,
-                   cv = split_my1fold_cv.split(df_gengap),
-                   refit = False,
-                   scoring = scoring[TARGET_TYPE],
-                   return_train_score = True,
-                   n_jobs = n_jobs) \
-    .fit(CreateSparseMatrix(metr = metr_standard, cate = cate_standard, df_ref = df_gengap).fit_transform(df_gengap),
-         df_gengap["target"])
+fit = (GridSearchCV_xlgb(xgb.XGBRegressor(verbosity = 0) if TARGET_TYPE == "REGR" else
+                         xgb.XGBClassifier(verbosity = 0),
+                         param_grid,
+                         cv = split_my1fold_cv.split(df_gengap),
+                         refit = False,
+                         scoring = d_scoring[TARGET_TYPE],
+                         return_train_score = True,
+                         n_jobs = n_jobs)
+       .fit(CreateSparseMatrix(metr = metr_standard, cate = cate_standard, df_ref = df_gengap).fit_transform(df_gengap),
+            df_gengap["target"]))
 plot_gengap(fit.cv_results_, metric = metric,
             x_var = "n_estimators", color_var = "max_depth", column_var = "min_child_weight", row_var = "gamma",
             pdf = plotloc + TARGET_TYPE + "_xgboost_gengap.pdf")
+
 
 # ######################################################################################################################
 # Simulation: compare algorithms
@@ -280,6 +281,7 @@ plot_gengap(fit.cv_results_, metric = metric,
 
 # Basic data sampling
 df_modelcomp = df_tune.copy()
+
 
 # --- Run methods ------------------------------------------------------------------------------------------------------
 
@@ -293,7 +295,7 @@ cvresults = cross_validate(
                               "l1_ratio": [1]},
                              cv = ShuffleSplit(1, 0.2, random_state = 999),  # just 1-fold for tuning
                              refit = metric,
-                             scoring = scoring[TARGET_TYPE],
+                             scoring = d_scoring[TARGET_TYPE],
                              return_train_score = False,
                              n_jobs = n_jobs),
     X = CreateSparseMatrix(metr = metr_binned, cate = cate_binned, df_ref = df_modelcomp).fit_transform(df_modelcomp),
@@ -307,13 +309,13 @@ df_modelcomp_result = df_modelcomp_result.append(pd.DataFrame.from_dict(cvresult
 
 # Xgboost
 cvresults = cross_validate(
-    estimator = GridSearchCV(
+    estimator = GridSearchCV_xlgb(
         xgb.XGBRegressor(verbosity = 0) if TARGET_TYPE == "REGR" else xgb.XGBClassifier(verbosity = 0),
-        {"n_estimators": [x for x in range(100, 1100, 200)], "learning_rate": [0.01],
+        {"n_estimators": [x for x in range(100, 1100, 500)], "learning_rate": [0.01],
          "max_depth": [6], "min_child_weight": [10]},
         cv = ShuffleSplit(1, 0.2, random_state = 999),  # just 1-fold for tuning
         refit = metric,
-        scoring = scoring[TARGET_TYPE],
+        scoring = d_scoring[TARGET_TYPE],
         return_train_score = False,
         n_jobs = n_jobs),
     X = CreateSparseMatrix(metr = metr_standard, cate = cate_standard, df_ref = df_modelcomp).fit_transform(
@@ -326,28 +328,29 @@ df_modelcomp_result = df_modelcomp_result.append(pd.DataFrame.from_dict(cvresult
                                                  .assign(model = "XGBoost"),
                                                  ignore_index = True)
 
+
 # --- Plot model comparison ------------------------------------------------------------------------------
 
 plot_modelcomp(df_modelcomp_result.rename(columns = {"index": "run", "test_score": metric}), scorevar = metric,
                pdf = plotloc + TARGET_TYPE + "_model_comparison.pdf")
 
+
 # ######################################################################################################################
 # Learning curve for winner algorithm
 # ######################################################################################################################
-
 
 # Basic data sampling
 df_lc = df_tune.copy()
 
 # Calc learning curve
 n_train, score_train, score_test = learning_curve(
-    estimator = GridSearchCV(
+    estimator = GridSearchCV_xlgb(
         xgb.XGBRegressor(verbosity = 0) if TARGET_TYPE == "REGR" else xgb.XGBClassifier(verbosity = 0),
         {"n_estimators": [x for x in range(100, 1100, 200)], "learning_rate": [0.01],
          "max_depth": [3], "min_child_weight": [10]},
         cv = ShuffleSplit(1, 0.2, random_state = 999),  # just 1-fold for tuning
         refit = metric,
-        scoring = scoring[TARGET_TYPE],
+        scoring = d_scoring[TARGET_TYPE],
         return_train_score = False,
         n_jobs = 4),
     X = CreateSparseMatrix(metr = metr_standard, cate = cate_standard, df_ref = df_lc).fit_transform(df_lc),

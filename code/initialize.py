@@ -20,20 +20,29 @@ from scipy.sparse import hstack
 from scipy.cluster.hierarchy import ward, fcluster
 
 # ML
+from sklearn.model_selection import *
 from sklearn.metrics import *
 from sklearn.preprocessing import *
 from sklearn.calibration import calibration_curve
-from sklearn.base import BaseEstimator, TransformerMixin  # , ClassifierMixin
+from sklearn.base import BaseEstimator, TransformerMixin, clone  # , ClassifierMixin
 from sklearn.impute import SimpleImputer
+from sklearn.utils import _safe_indexing
 # from sklearn.externals.six import StringIO
 # from glmnet_python import glmnet, glmnetPredict
+import xgboost as xgb
+import lightgbm as lgbm
 import shap
 
 # Util
 # noinspection PyUnresolvedReferences
-import sys, os, pickle, pdb  # pdb.set_trace()  #quit with "q", next line with "n", continue with "c"
+import sys
+import os
+import pickle
+import pdb  # pdb.set_trace()  #quit with "q", next line with "n", continue with "c"
 from joblib import Parallel, delayed
 import warnings
+from itertools import product
+import time
 
 # from collections import defaultdict
 # from dill import (load_session, dump_session)
@@ -98,18 +107,18 @@ def auc(y_true, y_pred):
 
 
 def acc(y_true, y_pred):
-    if y_true.ndim == 2:
-        y_true = y_true.idxmax(axis = 1)
+    if y_pred.ndim > 1:
+        y_pred = y_pred.argmax(axis = 1)
     return accuracy_score(y_true, y_pred)
 
 
 # Scoring metrics
-scoring = {"CLASS": {"auc": make_scorer(auc, greater_is_better = True, needs_proba = True),
-                     "acc": make_scorer(acc, greater_is_better = True)},
-           "MULTICLASS": {"auc": make_scorer(auc, greater_is_better = True, needs_proba = True),
-                          "acc": make_scorer(acc, greater_is_better = True)},
-           "REGR": {"spear": make_scorer(spear, greater_is_better = True),
-                    "rmse": make_scorer(rmse, greater_is_better = False)}}
+d_scoring = {"CLASS": {"auc": make_scorer(auc, greater_is_better = True, needs_proba = True),
+                       "acc": make_scorer(acc, greater_is_better = True)},
+             "MULTICLASS": {"auc": make_scorer(auc, greater_is_better = True, needs_proba = True),
+                            "acc": make_scorer(acc, greater_is_better = True)},
+             "REGR": {"spear": make_scorer(spear, greater_is_better = True),
+                      "rmse": make_scorer(rmse, greater_is_better = False)}}
 
 
 # Show closed figure again
@@ -328,6 +337,8 @@ def plot_distr(df, features,
                     ymax = ylim[1]
                     xmin = df[feature_act].min()
                     xmax = df[feature_act].max()
+                else:
+                    ymin = ymax = xmin = xmax = None
 
                 # Calc colormap
                 tmp_cmap = mcolors.LinearSegmentedColormap.from_list("gr_bl_yl_rd",
@@ -369,8 +380,8 @@ def plot_distr(df, features,
                 inset_ax.get_shared_x_axes().join(ax_act, inset_ax)
                 sns.boxplot(x = df.loc[i_bool, feature_act], palette = ["grey"], ax = inset_ax)
                 ax_act.set_xlabel(feature_act + " (NA: " +
-                                    str(df[feature_act].isnull().mean().round(3) * 100) +
-                                    "%)")  # set it again!
+                                  str(df[feature_act].isnull().mean().round(3) * 100) +
+                                  "%)")  # set it again!
 
             # Categorical feature
             else:
@@ -518,6 +529,86 @@ def plot_corr(df, features, cate_corr_type = "contingency", cutoff = 0, n_cluste
 
 
 # --- Modelcomparison ----------------------------------------------------------------------------------------------
+
+'''
+# Warmstart GridSearchCV
+# noinspection PyPep8Naming
+def myGridSearchCV(estimator, X, y, param_grid, cv, scoring, refit=False, return_train_score=False, n_jobs=None):
+
+    # Adapt grid: remove n_estimators
+    n_estimators = param_grid.pop("n_estimators")
+    df_param_grid = pd.DataFrame(product(*param_grid.values()), columns = param_grid.keys())
+
+    # Materialize generator as this cannot be pickled for parallel
+    l_cv = list(cv)
+
+    def run_in_parallel(i):
+        # Intialize
+        df_result = pd.DataFrame()
+
+        # Get actual parameter set
+        d_param = df_param_grid.iloc[[i], :].to_dict(orient = "records")[0]
+
+        for fold, (i_train, i_test) in enumerate(l_cv):
+
+            # Fit only once par parameter set with maximum number of n_estimators
+            # noinspection PyShadowingNames
+            fit = (clone(estimator).set_params(**d_param,
+                                               n_estimators = int(max(n_estimators)))
+                   .fit(X[i_train], y[i_train]))
+
+            # Score with all n_estimators
+            for ntree_limit in n_estimators:
+                yhat_test = fit.predict_proba(X[i_test], ntree_limit = ntree_limit)
+
+                # Do it for training as well
+                if return_train_score:
+                    yhat_train = fit.predict_proba(X[i_train], ntree_limit = ntree_limit)
+                else:
+                    yhat_train = None
+
+                # Get performance metrics
+                for scorer in scoring:
+                    # noinspection PyProtectedMember
+                    scorer_value = scoring[scorer]._score_func(y[i_test], yhat_test)
+                    df_result = df_result.append(pd.DataFrame(dict(fold_type = "test", fold = fold,
+                                                                   scorer = scorer, scorer_value = scorer_value,
+                                                                   n_estimators = ntree_limit, **d_param),
+                                                              index = [0]))
+                    if return_train_score:
+                        # noinspection PyProtectedMember
+                        scorer_value = scoring[scorer]._score_func(y[i_train], yhat_train)
+                        df_result = df_result.append(pd.DataFrame(dict(fold_type = "train", fold = fold,
+                                                                       scorer = scorer, scorer_value = scorer_value,
+                                                                       n_estimators = ntree_limit, **d_param),
+                                                                  index = [0]))
+        return df_results
+    df_results = pd.concat(Parallel(n_jobs = n_jobs, max_nbytes = '100M')(delayed(run_in_parallel)(row)
+                                                                          for row in range(len(df_param_grid))))
+
+    # Transform results
+    param_names = list(np.append(df_param_grid.columns.values, "n_estimators"))
+    df_cv_results = pd.pivot_table(df_results,
+                                   values = "scorer_value",
+                                   index = param_names,
+                                   columns = ["fold_type", "scorer"],
+                                   aggfunc = ["mean", "std"],
+                                   dropna = False)
+    df_cv_results.columns = ['_'.join(x) for x in df_cv_results.columns.values]
+    df_cv_results = df_cv_results.reset_index()
+    cv_results_ = df_cv_results.to_dict(orient = "list")
+
+    # Refit
+    if refit:
+        # noinspection PyTypeChecker
+        best_param = (df_cv_results[param_names].loc[[df_cv_results["mean_test_" + refit].idxmax()]]
+                      .to_dict(orient = "records")[0])
+        fit = (clone(estimator).set_params(**best_param).fit(X, y))
+    else:
+        fit = None
+
+    return {"fit": fit, "cv_results_": cv_results_}
+'''
 
 # Plot CV results
 def plot_cvresult(cv_results_, metric, x_var, color_var = None, column_var = None, row_var = None, style_var = None,
@@ -959,7 +1050,7 @@ def calc_varimp_by_permutation(df, fit, tr_spm = None,
         if target_type in ["CLASS", "MULTICLASS"]:
             perf = auc(df_perm[target],
                        scale_predictions(fit.predict_proba(tr_spm.transform(df_perm)), b_sample, b_all))
-        elif target_type == "REGR":
+        else:
             perf = spear(df_perm[target],
                          fit.predict(tr_spm.transform(df_perm)))
         return perf
@@ -1019,7 +1110,7 @@ def calc_partial_dependence(df, fit, df_ref, tr_spm = None,
 
     # Quantile and and values calculation
     d_quantiles = df[metr].quantile(quantiles).to_dict(orient = "list")
-    d_categories = tr_spm._d_categories
+    d_categories = tr_spm.d_categories
 
     # Set features to calculate importance for
     all_features = np.append(metr, cate)
@@ -1072,8 +1163,6 @@ def calc_partial_dependence(df, fit, df_ref, tr_spm = None,
 def calc_shap(df_explain, fit, tr_spm = None, metr = None, cate = None, df_ref = None,
               target_type = "CLASS", b_sample = None, b_all = None):
     # target_type = TARGET_TYPE;
-
-
 
     # Calc X_explain:
     if tr_spm is None:
@@ -1164,6 +1253,7 @@ def calc_shap(df_explain, fit, tr_spm = None, metr = None, cate = None, df_ref =
 def check_shap(df_shap, yhat_shap, target_type = "CLASS"):
 
     # Check
+    # noinspection PyUnusedLocal
     max_rank = df_shap["rank"].max()
     if target_type == "CLASS":
         yhat_shap = yhat_shap[:, 1]
@@ -1460,20 +1550,20 @@ class CreateSparseMatrix(BaseEstimator, TransformerMixin):
         self.cate = cate
         self.df_ref = df_ref
         self.sparse = sparse
-        self._d_categories = None
+        self.d_categories = None
         self.df_map = pd.DataFrame()
 
     def fit(self, df = None, *_):
         if self.df_ref is None:
             self.df_ref = df
         if self.cate is not None and len(self.cate) > 0:
-            self._d_categories = {x: self.df_ref[x].unique() for x in self.cate}
+            self.d_categories = {x: self.df_ref[x].unique() for x in self.cate}
         if self.metr is not None and len(self.metr) > 0:
             self.df_map = pd.concat([self.df_map,
                                      pd.DataFrame({"variable": self.metr, "value": None})])
         if self.cate is not None and len(self.cate) > 0:
             self.df_map = pd.concat([self.df_map,
-                                     (pd.DataFrame.from_dict(self._d_categories, orient = 'index')
+                                     (pd.DataFrame.from_dict(self.d_categories, orient = 'index')
                                       .T.melt().dropna().reset_index(drop = True))])
         self.df_map = self.df_map.reset_index(drop=True).reset_index().rename(columns={"index": "position"})
         return self
@@ -1488,7 +1578,7 @@ class CreateSparseMatrix(BaseEstimator, TransformerMixin):
         else:
             m_metr = None
         if self.cate is not None and len(self.cate) > 0:
-            enc = OneHotEncoder(categories = list(self._d_categories.values()), sparse = self.sparse)
+            enc = OneHotEncoder(categories = list(self.d_categories.values()), sparse = self.sparse)
 
             m_cate = enc.fit_transform(df[self.cate], y)
             # if len(self.cate) == 1:
@@ -1502,6 +1592,106 @@ class CreateSparseMatrix(BaseEstimator, TransformerMixin):
         else:
             return np.hstack([m_metr, m_cate])
 
+
+# Incremental n_estimators GridSearch
+class GridSearchCV_xlgb(GridSearchCV):
+
+    def fit(self, X, y=None, **fit_params):
+        #pdb.set_trace()
+
+        # Adapt grid: remove n_estimators
+        n_estimators = self.param_grid["n_estimators"]
+        param_grid = self.param_grid.copy()
+        del param_grid["n_estimators"]
+        df_param_grid = pd.DataFrame(product(*param_grid.values()), columns = param_grid.keys())
+
+        # Materialize generator as this cannot be pickled for parallel
+        self.cv = list(check_cv(self.cv, y).split(X))
+
+        # TODO: Iterate also over split (see original fit method)
+        def run_in_parallel(i):
+        #for i in range(len(df_param_grid)):
+
+            # Intialize
+            df_results = pd.DataFrame()
+
+            # Get actual parameter set
+            d_param = df_param_grid.iloc[[i], :].to_dict(orient = "records")[0]
+
+            for fold, (i_train, i_test) in enumerate(self.cv):
+
+                #pdb.set_trace()
+                # Fit only once par parameter set with maximum number of n_estimators
+                fit = (clone(self.estimator).set_params(**d_param,
+                                                        n_estimators = int(max(n_estimators)))
+                       .fit(_safe_indexing(X, i_train), _safe_indexing(y, i_train), **fit_params))
+
+                # Score with all n_estimators
+                for ntree_limit in n_estimators:
+                    if isinstance(self.estimator, lgbm.sklearn.LGBMClassifier):
+                        yhat_test = fit.predict_proba(_safe_indexing(X, i_test), num_iteration = ntree_limit)
+                    elif isinstance(self.estimator, lgbm.sklearn.LGBMRegressor):
+                        yhat_test = fit.predict(_safe_indexing(X, i_test), num_iteration = ntree_limit)
+                    elif isinstance(self.estimator, xgb.sklearn.XGBClassifier):
+                        yhat_test = fit.predict_proba(_safe_indexing(X, i_test), ntree_limit = ntree_limit)
+                    else:
+                        yhat_test = fit.predict(_safe_indexing(X, i_test), ntree_limit = ntree_limit)
+
+                    # Do it for training as well
+                    if self.return_train_score:
+                        if isinstance(self.estimator, lgbm.sklearn.LGBMClassifier):
+                            yhat_train = fit.predict_proba(_safe_indexing(X, i_train), num_iteration = ntree_limit)
+                        elif isinstance(self.estimator, lgbm.sklearn.LGBMRegressor):
+                            yhat_train = fit.predict(_safe_indexing(X, i_train), num_iteration = ntree_limit)
+                        elif isinstance(self.estimator, xgb.sklearn.XGBClassifier):
+                            yhat_train = fit.predict_proba(_safe_indexing(X, i_train), ntree_limit = ntree_limit)
+                        else:
+                            yhat_train = fit.predict(_safe_indexing(X, i_train), ntree_limit = ntree_limit)
+
+
+                    # Get performance metrics
+                    for scorer in self.scoring:
+                        scorer_value = self.scoring[scorer]._score_func(_safe_indexing(y, i_test), yhat_test)
+                        df_results = df_results.append(pd.DataFrame(dict(fold_type = "test", fold = fold,
+                                                                         scorer = scorer, scorer_value = scorer_value,
+                                                                         n_estimators = ntree_limit, **d_param),
+                                                                    index = [0]))
+                        if self.return_train_score:
+                            scorer_value = self.scoring[scorer]._score_func(_safe_indexing(y, i_train), yhat_train)
+                            df_results = df_results.append(pd.DataFrame(dict(fold_type = "train", fold = fold,
+                                                                             scorer = scorer,
+                                                                             scorer_value = scorer_value,
+                                                                             n_estimators = ntree_limit, **d_param),
+                                                                        index = [0]))
+            return df_results
+
+        df_results = pd.concat(Parallel(n_jobs = self.n_jobs,
+                                        max_nbytes = '100M')(delayed(run_in_parallel)(row)
+                                                             for row in range(len(df_param_grid))))
+
+        # Transform results
+        param_names = list(np.append(df_param_grid.columns.values, "n_estimators"))
+        df_cv_results = pd.pivot_table(df_results,
+                                       values = "scorer_value",
+                                       index = param_names,
+                                       columns = ["fold_type", "scorer"],
+                                       aggfunc = ["mean", "std"],
+                                       dropna = False)
+        df_cv_results.columns = ['_'.join(x) for x in df_cv_results.columns.values]
+        df_cv_results = df_cv_results.reset_index()
+        self.cv_results_ = df_cv_results.to_dict(orient = "list")
+
+        # Refit
+        if self.refit:
+            self.scorer_ = self.scoring
+            self.multimetric_ = True
+            self.best_index_ = df_cv_results["mean_test_" + self.refit].idxmax()
+            self.best_score_ = df_cv_results["mean_test_" + self.refit].loc[self.best_index_]
+            self.best_params_ = (df_cv_results[param_names].loc[[self.best_index_]]
+                                 .to_dict(orient = "records")[0])
+            self.best_estimator_ = (clone(self.estimator).set_params(**self.best_params_).fit(X, y, **fit_params))
+
+        return self
 
 # # NearestCentroid fails in Classifier context
 # class NearestCentroidClassifier(NearestCentroid):

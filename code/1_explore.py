@@ -11,7 +11,7 @@ from initialize import *
 
 
 # Main parameter
-TARGET_TYPE = "REGR"
+TARGET_TYPE = "MULTICLASS"
 
 # Specific parameters (CLASS is default)
 ylim = None
@@ -106,6 +106,7 @@ df["target"].describe()
 
 # Train/Test fold: usually split by time
 np.random.seed(123)
+# noinspection PyTypeChecker
 df["fold"] = np.random.permutation(
     pd.qcut(np.arange(len(df)), q = [0, 0.1, 0.8, 1], labels = ["util", "train", "test"]))
 print(df.fold.value_counts())
@@ -223,7 +224,6 @@ df[miss].isnull().sum()
 # ######################################################################################################################
 # Categorical  variables: Explore and adapt
 # ######################################################################################################################
-
 
 # --- Define categorical covariates -----------------------------------------------------------------------------------
 
