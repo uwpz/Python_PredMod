@@ -5,3 +5,8 @@ venv/
 code/__pycache__
 data/census-income.data
 .ipynb_checkpoints/
+.Rproj.user
+.Rhistory
+RStudio.Rproj
+*.gz
+output_HMS/

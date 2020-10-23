@@ -1,5 +1,5 @@
 
-
+print os.path.dirname(__file__)
 from initialize import *
 
 from itertools import product

@@ -26,7 +26,7 @@ from sklearn.preprocessing import *
 from sklearn.calibration import calibration_curve
 from sklearn.base import BaseEstimator, TransformerMixin, clone  # , ClassifierMixin
 from sklearn.impute import SimpleImputer
-from sklearn.utils import _safe_indexing
+# from sklearn.utils import _safe_indexing
 # from sklearn.externals.six import StringIO
 # from glmnet_python import glmnet, glmnetPredict
 import xgboost as xgb
@@ -109,6 +109,8 @@ def auc(y_true, y_pred):
 def acc(y_true, y_pred):
     if y_pred.ndim > 1:
         y_pred = y_pred.argmax(axis = 1)
+    if y_true.ndim > 1:
+        y_true = y_true.values.argmax(axis = 1)
     return accuracy_score(y_true, y_pred)
 
 
@@ -510,7 +512,7 @@ def plot_corr(df, features, cate_corr_type = "contingency", cutoff = 0, n_cluste
     # Plot
     fig, ax = plt.subplots(1, 1)
     ax_act = ax
-    sns.heatmap(df_corr, annot = True, fmt = ".2f", cmap = "Blues", ax = ax_act)
+    sns.heatmap(df_corr, annot = True, fmt = ".2f", cmap = "Blues", xticklabels=True, yticklabels=True ,ax = ax_act)
     ax_act.set_yticklabels(labels = ax_act.get_yticklabels(), rotation = 0)
     ax_act.set_xticklabels(labels = ax_act.get_xticklabels(), rotation = 90)
     if len(metr):
@@ -944,9 +946,10 @@ def plot_all_performances(y, yhat, target_labels = None, target_type = "CLASS", 
         ax_act = ax[0, 1]
 
         y_pred = yhat.argmax(axis = 1)
+        unique_true = np.unique(y)
         freq_true = np.unique(y, return_counts = True)[1]
         freqpct_true = np.round(np.divide(freq_true, len(y)) * 100, 1)
-        freq_pred = np.unique(y_pred, return_counts = True)[1]
+        freq_pred = np.unique(np.concatenate((y_pred, unique_true)), return_counts = True)[1] - 1
         freqpct_pred = np.round(np.divide(freq_pred, len(y)) * 100, 1)
 
         m_conf = confusion_matrix(y, y_pred)
@@ -1170,6 +1173,7 @@ def calc_shap(df_explain, fit, tr_spm = None, metr = None, cate = None, df_ref =
     X_explain = tr_spm.transform(df_explain)
 
     # Get shap values
+    pdb.set_trace()
     explainer = shap.TreeExplainer(fit)
     shap_values = explainer.shap_values(X_explain)
     intercepts = explainer.expected_value
