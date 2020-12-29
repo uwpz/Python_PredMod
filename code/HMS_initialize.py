@@ -38,8 +38,8 @@ import hmsPM.metrics as hms_metrics
 # ######################################################################################################################
 
 # Locations
-dataloc = "./data/"
-plotloc = "./output_HMS/"
+dataloc = "../data/"
+plotloc = "../output_HMS/"
 
 # Util
 sns.set(style = "whitegrid")
@@ -86,7 +86,7 @@ d_scoring = {"CLASS": {"auc": make_scorer(hms_metrics.auc, greater_is_better = T
 # --- Explore -----------------------------------------------------------------------------------------------------
 
 # Overview of values
-def create_values_df(df, topn):
+def create_values_df(df, topn = 5):
     return pd.concat([df[catname].value_counts()[:topn].reset_index().
                      rename(columns = {"index": catname, catname: catname + "_#"})
                       for catname in df.dtypes.index.values[df.dtypes == "object"]], axis = 1)

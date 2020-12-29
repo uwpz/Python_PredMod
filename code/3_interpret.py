@@ -10,7 +10,7 @@ from initialize import *
 from sklearn.model_selection import cross_validate
 
 # Main parameter
-TARGET_TYPE = "MULTICLASS"
+TARGET_TYPE = "REGR"
 
 # Specific parameters
 n_jobs = 4
@@ -20,18 +20,21 @@ if TARGET_TYPE == "CLASS":
     importance_cut = 99
     topn = 8
     ylim_res = (0, 1)
+    ylim_pd = (0, 1)
     color = twocol
 elif TARGET_TYPE == "MULTICLASS":
     metric = "auc"  # metric for peformance comparison
     importance_cut = 95
     topn = 15
     ylim_res = (0, 1)
+    ylim_pd = (0, 1)
     color = threecol
 else:  # "REGR"
     metric = "spear"
     importance_cut = 95
     topn = 15
     ylim_res = (-5e4, 5e4)
+    ylim_pd = (0, 300e4)
     color = None
 
 # Load results from exploration
@@ -194,21 +197,6 @@ if TARGET_TYPE == "REGR":
 plt.close(fig = "all")
 
 
-# ---- Explain bad predictions ------------------------------------------------------------------------------------
-
-# Get shap for n_worst predicted records
-n_worst = 10
-df_explain = df_test.sort_values("abs_residual", ascending = False).iloc[:n_worst, :]
-yhat_explain = yhat_test[df_explain.index.values]
-df_shap = calc_shap(df_explain, fit, tr_spm = tr_spm,
-                    target_type = TARGET_TYPE, b_sample = b_sample, b_all = b_all)
-
-# Check
-check_shap(df_shap, yhat_explain, target_type = TARGET_TYPE)
-
-# Plot: TODO
-
-
 # ######################################################################################################################
 # Variable Importance
 # ######################################################################################################################
@@ -238,9 +226,9 @@ for i, (i_train, i_test) in enumerate(split_my5fold.split(df_traintest)):
     df_varimp_cv = df_varimp_cv.append(df_tmp)
 
 # Plot
-plot_variable_importance(df_varimp, mask = df_varimp["feature"].isin(topn_features),
+plot_variable_importance(df_varimp, df_varimp_cv, mask = df_varimp["feature"].isin(topn_features), w = 8, h = 8,
                          pdf = plotloc + TARGET_TYPE + "_variable_importance.pdf")
-# TODO: add cv lines and errorbars
+
 
 
 # --- Compare variable importance for train and test (hints to variables prone to overfitting) -------------------------
@@ -271,15 +259,23 @@ for i, (i_train, i_test) in enumerate(split_my5fold.split(df_traintest)):
     df_tmp["run"] = i
     df_pd_cv = df_pd_cv.append(df_tmp)
 
-# Plot it
-# TODO
+
+if TARGET_TYPE != "MULTICLASS":  # TODO
+    # Plot it
+    plot_partial_dependence(df_pd, features = topn_features, df_ref = df_traintest, df_pd_cv = df_pd_cv,
+                            target = "target", target_type = TARGET_TYPE,
+                            color = "green" if TARGET_TYPE == "CLASS" else "blue", ylim = ylim_pd, min_width = 0.2,
+                            nrow = 2, ncol = 3, w = 18, h = 12,
+                            pdf = plotloc + TARGET_TYPE + "_partial_dependence.pdf")
+
+
 
 
 # ######################################################################################################################
 # Explanations
 # ######################################################################################################################
 
-# ---- Explain bad predictions ------------------------------------------------------------------------------------
+# ---- Explain predictions ------------------------------------------------------------------------------------
 
 # Filter data
 n_select = 10
@@ -297,13 +293,27 @@ df_shap = calc_shap(df_explain, fit, tr_spm = tr_spm,
 # Check
 check_shap(df_shap, yhat_explain, target_type = TARGET_TYPE)
 
-# Plot: TODO
 
-plt.close("all")
+# ---- Plot predictions ------------------------------------------------------------------------------------
+
+# Reduce to true target
+if TARGET_TYPE == "MULTICLASS":
+    df_shap = df_shap.query("target == y").reset_index(drop = True)
+
+'''
+df_shap["variable_value"] = np.where(df_shap["variable"].isin(["fare_pp", "fare_LOG_"]),
+                                     df_shap["variable_value"].astype("str").str.slice(0,4),
+                                     df_shap["variable_value"])
+'''
+
+plot_shap(df_shap, topn = topn, id_name = "id", color = twocol,
+          nrow = 2, ncol = 2, w = 18, h = 12,
+          pdf = plotloc + TARGET_TYPE + "_shap.pdf")
+
 
 
 # ######################################################################################################################
-# Individual dependencies
+# Individual dependencies (Ceteris-Paribus Profiles)
 # ######################################################################################################################
 
 # TODO

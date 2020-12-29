@@ -27,7 +27,8 @@ else:
     metric = "spear"
 
 # Load results from exploration
-df = nume_standard = cate_standard = nume_binned = cate_binned = nume_encoded = cate_encoded = target_labels = None
+df = target_name = nume_standard = cate_standard = nume_binned = cate_binned = nume_encoded = cate_encoded = \
+    target_labels = None
 with open(TARGET_TYPE + "_1_explore_HMS.pkl", "rb") as file:
     d_pick = pickle.load(file)
 for key, val in d_pick.items():
@@ -46,19 +47,22 @@ df[nume_encoded].describe()
 
 if TARGET_TYPE in ["CLASS", "MULTICLASS"]:
     # Undersample only training data (take all but n_maxpersample at most)
-    under_samp = Undersample(n_max_per_level = 5000000)
-    df_tmp = under_samp.fit_transform(df.query("fold == 'train'").reset_index(drop = True))
+    under_samp = Undersample(n_max_per_level = 50000)
+    df_tmp = under_samp.fit_transform(df.query("fold == 'train'").reset_index(drop = True), target = target_name)
+
     '''
     # DOES NOT WORK:
-    under_samp = Undersampler(sampling_strategy = 0.8)
-    df_tmp = under_samp.fit_resample(X = df, y = df["target"])
+    under_samp = hms_preproc.Undersampler(n_max_per_level = 50000)
+    df_tmp = df.query("fold == 'train'").reset_index(drop = True)
+    df_tmp = under_samp.fit_transform(X = df_tmp, y = df_tmp[target_name])
     '''
+
     b_all = under_samp.b_all
     b_sample = under_samp.b_sample
     print(b_sample, b_all)
     df_tune = pd.concat([df_tmp, df.query("fold == 'test'").reset_index(drop = True)], sort = False).reset_index(
         drop = True)
-    df_tune.groupby("fold")["target"].describe()
+    df_tune.groupby("fold")[target_name].describe()
 else:  # "REGR"
     df_tune = df.sample(n = min(df.shape[0], int(5e3))).reset_index(drop = True)
 
@@ -95,7 +99,7 @@ fit = (GridSearchCV(SGDRegressor(penalty = "ElasticNet", warm_start = True) if T
                     n_jobs = n_jobs)
        .fit(hms_preproc.MatrixConverter(to_sparse = True)
             .fit_transform(df_tune[np.append(nume_binned, cate_binned)]),
-            df_tune["target"]))
+            df_tune[target_name]))
 (hms_plot.ValidationPlotter(x_var = "alpha", color_var = "l1_ratio",
                             show_generation_gap = True).plot(fit.cv_results_, metric = metric))
 pd.DataFrame(fit.cv_results_)
@@ -110,7 +114,7 @@ if TARGET_TYPE in ["CLASS", "MULTICLASS"]:
                         n_jobs = n_jobs)
            .fit(hms_preproc.MatrixConverter(to_sparse = True)
                 .fit_transform(df_tune[np.append(nume_binned, cate_binned)]),
-                df_tune["target"]))
+                df_tune[target_name]))
     (hms_plot.ValidationPlotter(x_var = "C", show_generation_gap = True).plot(fit.cv_results_, metric = metric))
 # -> keep l1_ratio=1 to have a full Lasso
 
@@ -127,7 +131,7 @@ fit = (GridSearchCV(RandomForestRegressor() if TARGET_TYPE == "REGR" else Random
                     n_jobs = n_jobs)
        .fit(hms_preproc.MatrixConverter(to_sparse = True)
             .fit_transform(df_tune[np.append(nume_standard, cate_standard)]),
-            df_tune["target"]))
+            df_tune[target_name]))
 (hms_plot.ValidationPlotter(x_var = "n_estimators", color_var = "max_features",
                             show_generation_gap = True).plot(fit.cv_results_, metric = metric))
 # -> keep around the recommended values: max_features = floor(sqrt(length(features)))
@@ -145,7 +149,7 @@ fit = (GridSearchCV_xlgb(xgb.XGBRegressor(verbosity = 0) if TARGET_TYPE == "REGR
                          n_jobs = n_jobs)
        .fit(hms_preproc.MatrixConverter(to_sparse = True)
             .fit_transform(df_tune[np.append(nume_standard, cate_standard)]),
-            df_tune["target"]))
+            df_tune[target_name]))
 print(time.time()-start)
 pd.DataFrame(fit.cv_results_)
 (hms_plot.ValidationPlotter(x_var = "n_estimators", color_var = "max_depth", column_var = "min_child_weight",
@@ -155,7 +159,7 @@ pd.DataFrame(fit.cv_results_)
 fit = myGridSearchCV(xgb.XGBRegressor(verbosity = 0) if TARGET_TYPE == "REGR" else xgb.XGBClassifier(verbosity = 0),
                      X = (CreateSparseMatrix(nume = nume_standard, cate = cate_standard, df_ref = df_tune)
                           .fit_transform(df_tune)),
-                     y = df_tune["target"],
+                     y = df_tune[target_name],
                      param_grid = {"n_estimators": [x for x in range(100, 300, 100)], "learning_rate": [0.01],
                                    "max_depth": [3, 6], "min_child_weight": [5, 10]},
                      cv = split_my1fold_cv.split(df_tune),
@@ -177,7 +181,7 @@ fit = (GridSearchCV_xlgb(lgbm.LGBMRegressor() if TARGET_TYPE == "REGR" else lgbm
                          scoring = d_scoring[TARGET_TYPE],
                          return_train_score = True,
                          n_jobs = n_jobs)
-       .fit(df_tune[nume_encoded], df_tune["target"],
+       .fit(df_tune[nume_encoded], df_tune[target_name],
             categorical_feature = [x for x in nume_encoded.tolist() if "_ENCODED" in x]))
 print(time.time()-start)
 (hms_plot.ValidationPlotter(x_var = "n_estimators", color_var = "num_leaves", column_var = "min_child_samples",
@@ -246,9 +250,9 @@ fit = (GridSearchCV(KerasRegressor(build_fn = keras_model,
                     refit = False,
                     scoring = d_scoring[TARGET_TYPE],
                     return_train_score = False,
-                    n_jobs = n_jobs)
+                    n_jobs = 1)
        .fit(hms_preproc.MatrixConverter(to_sparse = True).fit_transform(df_tune[nume_encoded]),
-            pd.get_dummies(df_tune["target"]) if TARGET_TYPE == "MULTICLASS" else df_tune["target"]))
+            pd.get_dummies(df_tune[target_name]) if TARGET_TYPE == "MULTICLASS" else df_tune[target_name]))
 (hms_plot.ValidationPlotter(x_var = "epochs", color_var = "lambdah", column_var = "activation", row_var = "size",
                             show_generation_gap = False).plot(fit.cv_results_, metric = metric))
 
@@ -277,7 +281,7 @@ fit = (GridSearchCV_xlgb(xgb.XGBRegressor(verbosity = 0) if TARGET_TYPE == "REGR
                          n_jobs = n_jobs)
        .fit(hms_preproc.MatrixConverter(to_sparse = True)
             .fit_transform(df_gengap[np.append(nume_standard, cate_standard)]),
-            df_gengap["target"]))
+            df_gengap[target_name]))
 (hms_plot.ValidationPlotter(x_var = "n_estimators", color_var = "max_depth", column_var = "min_child_weight",
                             row_var = "gamma", show_generation_gap = True)
  .plot(fit.cv_results_, metric = metric,
@@ -308,7 +312,7 @@ cvresults = cross_validate(
                              return_train_score = False,
                              n_jobs = n_jobs),
     X = hms_preproc.MatrixConverter(to_sparse = True).fit_transform(df_modelcomp[np.append(nume_binned, cate_binned)]),
-    y = df_modelcomp["target"],
+    y = df_modelcomp[target_name],
     cv = split_my5fold_cv.split(df_modelcomp),
     scoring = d_scoring[TARGET_TYPE],
     return_train_score = False,
@@ -330,7 +334,7 @@ cvresults = cross_validate(
         n_jobs = n_jobs),
     X = hms_preproc.MatrixConverter(to_sparse = True)
         .fit_transform(df_modelcomp[np.append(nume_standard, cate_standard)]),
-    y = df_modelcomp["target"],
+    y = df_modelcomp[target_name],
     cv = split_my5fold_cv.split(df_modelcomp),
     scoring = d_scoring[TARGET_TYPE],
     return_train_score = False,
@@ -366,7 +370,7 @@ n_train, score_train, score_test, time_train, time_test = learning_curve(
         return_train_score = False,
         n_jobs = 4),
     X = hms_preproc.MatrixConverter(to_sparse = True).fit_transform(df_lc[np.append(nume_standard, cate_standard)]),
-    y = df_lc["target"],
+    y = df_lc[target_name],
     train_sizes = np.append(np.linspace(0.05, 0.1, 5), np.linspace(0.2, 1, 5)),
     cv = split_my1fold_cv.split(df_lc),
     scoring = d_scoring[TARGET_TYPE][metric],

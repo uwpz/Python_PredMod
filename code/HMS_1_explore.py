@@ -10,16 +10,19 @@ from HMS_initialize import *
 TARGET_TYPE = "CLASS"
 
 # Specific parameters (CLASS is default)
+target_name = "survived"
 ylim = (0, 1)
 min_width = 0
 cutoff_corr = 0.1
 cutoff_varimp = 0.52
 if TARGET_TYPE == "MULTICLASS":
+    target_name = "SalePrice_Category"
     ylim = None
     min_width = 0.2
     cutoff_corr = 0.1
     cutoff_varimp = 0.52
 if TARGET_TYPE == "REGR":
+    target_name = "SalePrice"
     ylim = (0, 300e3)
     cutoff_corr = 0.8
     cutoff_varimp = 0.52
@@ -87,7 +90,7 @@ print(setdiff(df_meta["variable"].values, df.columns.values))
 
 
 # --- Define target and train/test-fold ----------------------------------------------------------------------------
-
+'''
 # Target
 if TARGET_TYPE == "CLASS":
     df["target"] = df["survived"]
@@ -96,6 +99,10 @@ if TARGET_TYPE == "REGR":
 if TARGET_TYPE == "MULTICLASS":
     df["target"] = hms_preproc.QuantileBinner(n_bins = 3, output_format = "quantiles").fit_transform(df["SalePrice"])
 df["target"].describe()
+'''
+if TARGET_TYPE == "MULTICLASS":
+    df["SalePrice_Category"] = hms_preproc.QuantileBinner(n_bins = 3, output_format = "quantiles").fit_transform(df["SalePrice"])
+
 
 # Train/Test fold: usually split by time
 np.random.seed(123)
@@ -147,9 +154,10 @@ df[nume].describe()
 start = time.time()
 distr_nume_plots = (hms_plot.MultiFeatureDistributionPlotter(n_rows = 2, n_cols = 3, w = 18, h = 12)
                     .plot(features = df[nume],
-                          target = df["target"],
+                          target = df[target_name],
                           file_path = plotloc + TARGET_TYPE + "_distr_nume.pdf"))
 print(time.time()-start)
+
 # Winsorize (hint: plot again before deciding for log-trafo)
 df = hms_preproc.Winsorizer(column_names = nume, quantiles = (0.02, 0.98)).fit_transform(df)
 
@@ -166,17 +174,49 @@ df.rename(columns = dict(zip(tolog + "_BINNED", tolog + "_LOG_" + "_BINNED")), i
 # --- Final variable information ------------------------------------------------------------------------------------
 
 # Univariate variable importance
-varimps_nume = (hms_calc.UnivariateFeatureImportanceCalculator(nbins = 10, ndigits = 2)
-                .calculate(features = df[np.append(nume, nume + "_BINNED")], target = df["target"]))
+varimps_nume = (hms_calc.UnivariateFeatureImportanceCalculator(n_bins = 10, n_digits = 2)
+                .calculate(features = df[np.append(nume, nume + "_BINNED")], target = df[target_name]))
 print(varimps_nume)
 
 # Plot
 distr_nume_plots = (hms_plot.MultiFeatureDistributionPlotter(target_limits = ylim, show_regplot = True,
-                                                             n_rows = 2, n_cols = 4, w = 18, h = 12)
+                                                             n_rows = 2, n_cols = 4, w = 12, h = 8)
                     .plot(features = df[np.column_stack((nume, nume + "_BINNED")).ravel()],
-                          target = df["target"],
+                          target = df[target_name],
                           varimps = varimps_nume,
                           file_path = plotloc + TARGET_TYPE + "_distr_nume_final.pdf"))
+
+
+plt.ion(); matplotlib.use('TkAgg')
+
+page = 0
+
+fig, ax = plt.subplots(2,3)
+fig.set_size_inches(w = 12, h = 8)
+fig.tight_layout()
+
+# Remove empty ax
+new_ax = ax[1,1]
+#new_ax.remove()
+
+# Get old_ax and assign it to the figure, move it to the position of new_ax and add it to figure
+old_ax = distr_nume_plots[page][1][0, 0]
+old_ax.set_title("blub")
+#old_ax = ax1[0,1]
+#old_ax.__dict__
+type(old_ax)
+old_ax._position = new_ax._position
+old_ax._originalPosition = new_ax._originalPosition
+old_ax.reset_position()
+old_ax.figure = fig
+#old_ax.figbox = new_ax.figbox
+old_ax.change_geometry(*(new_ax.get_geometry()))
+old_ax.pchanged()
+#old_ax.set_position(new_ax.get_position())
+
+fig.add_axes(old_ax)
+
+
 
 # --- Removing variables -------------------------------------------------------------------------------------------
 
@@ -197,7 +237,7 @@ nume = setdiff(nume, remove)
 # Hint: In case of having a detailed date variable this can be used as regression target here as well!
 
 # Univariate variable importance (again ONLY for non-missing observations!)
-varimps_nume_fold = (hms_calc.UnivariateFeatureImportanceCalculator(nbins = 10, ndigits = 2)
+varimps_nume_fold = (hms_calc.UnivariateFeatureImportanceCalculator(n_bins = 10, n_digits = 2)
                      .calculate(features = df[nume], target = df["fold_num"]))
 
 # Plot: only variables with with highest importance
@@ -256,8 +296,8 @@ print(toomany)
 toomany = setdiff(toomany, ["xxx", "xxx"])  # set exception for important variables
 
 # Create encoded features (for tree based models), i.e. numeric representation
-df[cate + "_ENCODED"] = (hms_preproc.TargetEncoder(subset_index = df[df["fold"] == "util"].index)
-                         .fit_transform(df[cate], df["target"]))
+df[cate + "_ENCODED"] = (hms_preproc.TargetEncoder(subset_index = df[df["fold"] == "util"].index.values)
+                         .fit_transform(df[cate], df[target_name]))
 df["MISS_" + miss + "_ENCODED"] = df["MISS_" + miss].apply(lambda x: x.map({"no_miss": 0, "miss": 1}))
 ''' 
 # BUG: Some non-exist even they do exist
@@ -270,15 +310,15 @@ print(df[df["fold"] == "util"][cate[i]].value_counts())
 df[toomany] = hms_preproc.CategoryCollapser(n_top = 10).fit_transform(df[toomany])
 
 # Univariate variable importance
-varimps_cate = (hms_calc.UnivariateFeatureImportanceCalculator(ndigits = 2)
-                .calculate(features = df[np.append(cate, ["MISS_" + miss])], target = df["target"]))
+varimps_cate = (hms_calc.UnivariateFeatureImportanceCalculator(n_digits = 2)
+                .calculate(features = df[np.append(cate, ["MISS_" + miss])], target = df[target_name]))
 print(varimps_cate)
 
 # Check
 distr_cate_plots = (hms_plot.MultiFeatureDistributionPlotter(target_limits = ylim, min_bar_width = min_width,
                                                              n_rows = 2, n_cols = 3, w = 18, h = 12)
                     .plot(features = df[np.append(cate, ["MISS_" + miss])],
-                          target = df["target"],
+                          target = df[target_name],
                           varimps = varimps_cate,
                           file_path = plotloc + TARGET_TYPE + "_distr_cate.pdf"))
 
@@ -310,7 +350,7 @@ corr_cate_plot = (hms_plot.CorrelationPlotter(cutoff = cutoff_corr, w = 8, h = 6
 
 # Hint: In case of having a detailed date variable this can be used as regression target here as well!
 # Univariate variable importance (again ONLY for non-missing observations!)
-varimps_cate_fold = (hms_calc.UnivariateFeatureImportanceCalculator(ndigits = 2)
+varimps_cate_fold = (hms_calc.UnivariateFeatureImportanceCalculator(n_digits = 2)
                      .calculate(features = df[np.append(cate, ["MISS_" + miss])], target = df["fold_num"]))
 
 # Plot: only variables with with highest importance
@@ -331,10 +371,10 @@ distr_cate_folddep_plots = (hms_plot.MultiFeatureDistributionPlotter(n_rows = 2,
 # Switch target to numeric in case of multiclass
 if TARGET_TYPE == "MULTICLASS":
     tmp = LabelEncoder()
-    df["target"] = tmp.fit_transform(df["target"])
+    df[target_name] = tmp.fit_transform(df[target_name])
     target_labels = tmp.classes_
 else:
-    target_labels = "target"
+    target_labels = target_name
 
 
 # --- Define final features ----------------------------------------------------------------------------------------
@@ -371,6 +411,7 @@ del df_orig
 # Serialize
 with open(TARGET_TYPE + "_1_explore_HMS.pkl", "wb") as file:
     pickle.dump({"df": df,
+                 "target_name": target_name,
                  "target_labels": target_labels,
                  "nume_standard": nume_standard,
                  "cate_standard": cate_standard,

@@ -24,7 +24,7 @@ from sklearn.model_selection import *
 from sklearn.metrics import *
 from sklearn.preprocessing import *
 from sklearn.calibration import calibration_curve
-from sklearn.base import BaseEstimator, TransformerMixin, clone  # , ClassifierMixin
+from sklearn.base import BaseEstimator, TransformerMixin, clone, ClassifierMixin
 from sklearn.impute import SimpleImputer
 # from sklearn.utils import _safe_indexing
 # from sklearn.externals.six import StringIO
@@ -100,6 +100,7 @@ def rmse(y_true, y_pred):
 
 
 def auc(y_true, y_pred):
+    pdb.set_trace()
     if y_pred.ndim == 2:
         if y_pred.shape[1] == 2:
             y_pred = y_pred[:, 1]
@@ -273,6 +274,7 @@ def plot_distr(df, features,
                 i_bool = df[feature_act].notnull()
                 sns.boxplot(x = df.loc[i_bool, feature_act],
                             y = df.loc[i_bool, target].astype("category"),
+                            orient = "h",
                             showmeans = True,
                             meanprops = {"marker": "x", "markerfacecolor": "black", "markeredgecolor": "black"},
                             palette = color,
@@ -446,6 +448,8 @@ def plot_distr(df, features,
     # Close pdf
     if pdf is not None:
         pdf_pages.close()
+
+
 
 
 # Plot correlation
@@ -1072,21 +1076,37 @@ def calc_varimp_by_permutation(df, fit, tr_spm = None,
 
 
 # Plot variable importance
-def plot_variable_importance(df_varimp, mask = None, w = 18, h = 12, pdf = None):
+def plot_variable_importance(df_varimp, df_varimp_cv = None, mask = None, w = 18, h = 12, pdf = None):
 
     # Prepare
     n_features = len(df_varimp)
     if mask is not None:
-        df_varimp = df_varimp[mask]
+        df_plot = df_varimp[mask]
+    else:
+        df_plot = df_varimp
+
+    # Aggregate and add
+    if df_varimp_cv is not None:
+        df_plot = df_plot.merge(df_varimp_cv.groupby("feature")[["importance"]].agg(["mean", "sem"])
+                                    .pipe(lambda x: x.set_axis([a + "_" + b for a, b in x.columns], axis = 1,
+                                                               inplace = False))
+                                    .reset_index(),
+                                    how = "left", on = "feature")
 
     # Plot
     fig, ax = plt.subplots(1, 1)
-    sns.barplot("importance", "feature", hue = "Category", data = df_varimp,
+    sns.barplot("importance", "feature", hue = "Category", data = df_plot,
                 dodge = False, palette = sns.xkcd_palette(["blue", "orange", "red"]), ax = ax)
     ax.legend(loc = 8, title = "Importance")
-    ax.plot("importance_cum", "feature", data = df_varimp, color = "grey", marker = "o")
+    ax.plot("importance_cum", "feature", data = df_plot, color = "black", marker = "o")
+    if df_varimp_cv is not None:
+        ax.errorbar(x = df_plot["importance_mean"], y = df_plot["feature"],
+                    xerr = df_plot["importance_sem"],
+                    fmt = ".", marker = "s", fillstyle = "none", color = "grey")
     ax.set_xlabel(r"importance / cumulative importance in % (-$\bullet$-)")
-    ax.set_title("Top{0: .0f} (of{1: .0f}) Feature Importances".format(len(df_varimp), n_features))
+    ax.set_title("Top{0: .0f} (of{1: .0f}) Feature Importances".format(len(df_plot), n_features))
+    if df_varimp_cv is not None:
+        ax.set_title(ax.get_title() + r" (incl. CV (-$\boxminus$-))")
     fig.tight_layout()
     fig.set_size_inches(w = w, h = h)
     if pdf:
@@ -1112,7 +1132,7 @@ def calc_partial_dependence(df, fit, df_ref, tr_spm = None,
         cate = tr_spm.cate
 
     # Quantile and and values calculation
-    d_quantiles = df[metr].quantile(quantiles).to_dict(orient = "list")
+    d_quantiles = df_ref[metr].quantile(quantiles).to_dict(orient = "list")
     d_categories = tr_spm.d_categories
 
     # Set features to calculate importance for
@@ -1152,6 +1172,7 @@ def calc_partial_dependence(df, fit, df_ref, tr_spm = None,
                                                          "target": "target", "yhat_mean": yhat_mean}, index = [0])])
             # Append prediction of overwritten value
 
+        df_pd_feature["type"] = "metr" if feature in metr else "cate"
         return df_pd_feature
 
     # Run in parallel and append
@@ -1161,10 +1182,164 @@ def calc_partial_dependence(df, fit, df_ref, tr_spm = None,
     return df_pd
 
 
+# Plot distribution regarding target
+def plot_partial_dependence(df_pd, features, df_ref = None, df_pd_cv = None, target = "target", target_type = "CLASS",
+                            ci = "std", #"sem"
+                            color = None, ylim = None, min_width = None,
+                            nrow = 1, ncol = 1, w = 8, h = 6,
+                            pdf = None):
+    # df_ref = df; features = metr; target = "target"; target_type="CLASS"; color=twocol[1]; min_width=0; ylim = None;
+    # ncol=3; nrow=3; pdf=None; w=8; h=6
+
+    # Help variables
+    n_ppp = ncol * nrow  # plots per page
+
+    # Open pdf
+    if pdf is not None:
+        pdf_pages = PdfPages(pdf)
+    else:
+        pdf_pages = None
+
+    # Dummy initilization
+    fig = ax = i_ax = None
+
+    # Plot (loop over features)
+    for i, feature_act in enumerate(features):
+        # i=0; feature_act=features[i]
+
+        # Start new subplot on new page
+        if i % n_ppp == 0:
+            fig, ax = plt.subplots(nrow, ncol)
+            fig.set_size_inches(w = w, h = h)
+            i_ax = 0
+
+        # Catch single plot case
+        if n_ppp == 1:
+            ax_act = ax
+        else:
+            ax_act = ax.flat[i_ax]
+
+        # Subset df_pd
+        df_plot = df_pd[df_pd["feature"] == feature_act]
+
+        # Add CV information
+        if df_pd_cv is not None:
+            df_plot = (df_plot.merge(df_pd_cv[df_pd_cv["feature"] == feature_act]
+                                    .groupby("value")[["yhat_mean"]].agg(["mean", "std", "sem"])
+                                    .pipe(lambda x: x.set_axis([a + "_" + b for a, b in x.columns],
+                                                               axis = 1, inplace = False)).reset_index(),
+                                    how = "left", on = "value")
+                       .assign(yhat_mean_ci = lambda x: x["yhat_mean_std"] if ci == "std" else x["yhat_mean_sem"]))
+
+        # Distinguish first by target_type ...
+        if target_type in ["CLASS", "REGR"]:
+
+            # ... then by feature type (metric features)
+            if df_plot["type"].values[0] == "metr":
+
+                # Main plot
+                df_plot["value"] = df_plot["value"].astype(float)
+                ax_act.plot(df_plot["value"], df_plot["yhat_mean"], marker = ".", color = color)
+
+                # Background density plot
+                if df_ref is not None:
+                    ax2 = ax_act.twinx()
+                    ax2.axis("off")
+                    sns.distplot(df_ref[feature_act], color = "grey", hist = False,
+                                 kde = True, kde_kws = {'shade': True, 'linewidth': 0},
+                                 ax = ax2)
+
+                # Rugs
+                sns.rugplot(df_plot["value"], color = "grey", ax = ax_act)
+
+                # Refline
+                if df_ref is not None:
+                    ax_act.axhline(np.mean(df_ref[target]), ls = "dotted", color = "black")  # priori line
+
+                # Axis style
+                    ax_act.set_title(feature_act)
+                    ax_act.set_ylabel(r"$\^y$")
+                if ylim is not None:
+                    ax_act.set_ylim(ylim)
+
+                # Crossvalidation
+                if df_pd_cv is not None:
+                    # ax_act.errorbar(df_plot["value"], df_plot["yhat_mean"],
+                    #               yerr = df_plot["yhat_mean_std"],
+                    #               fmt = ".", marker = "s", capsize = 5, fillstyle = "none", color = "grey")
+                    ax_act.plot(df_plot["value"],
+                                df_plot["yhat_mean"] - df_plot["yhat_mean_ci"], linestyle = "--", color = color)
+                    ax_act.plot(df_plot["value"],
+                                df_plot["yhat_mean"] + df_plot["yhat_mean_ci"], linestyle = "--", color = color)
+                    ax_act.fill_between(df_plot["value"],
+                                        df_plot["yhat_mean"] - df_plot["yhat_mean_ci"],
+                                        df_plot["yhat_mean"] + df_plot["yhat_mean_ci"],
+                                        color = color, alpha = 0.2)
+
+            # "cate"
+            else:
+                # Refline
+                if df_ref is not None:
+                    #pdb.set_trace()
+                    df_plot = df_plot.merge(pd.DataFrame(df_ref.groupby(feature_act).size().reset_index())
+                                            .rename(columns = {0: "pct"}),
+                                            how = "left", left_on = "value", right_on = feature_act)
+                    df_plot["pct"] = df_plot["pct"] / len(df_ref)
+                    df_plot["w"] = 0.9 * df_plot["pct"] / max(df_plot["pct"])
+                    df_plot["value"] = (df_plot["value"] + " (" + (df_plot["pct"] * 100).round(1).astype(str) + "%)")
+                    df_plot["w"] = np.where(df_plot["w"].values < min_width, min_width, df_plot["w"])
+                    ax_act.axvline(np.mean(df_ref[target]), ls = "dotted", color = "black")  # priori line
+                    #pdb.set_trace()
+
+
+                # Main plot
+                #pdb.set_trace()
+                ax_act.barh(df_plot["value"], df_plot["yhat_mean"],
+                            height = df_plot["w"] if df_ref is not None else 0.8,
+                            color = color, edgecolor = "black", alpha = 0.5, linewidth = 1)
+                # if df_ref is not None:
+                    # ax2 = ax_act.twiny()
+                    # ax2.barh(df_plot["value"], df_plot["pct"],
+                             # color = "grey", edgecolor = "grey", alpha = 0.5, linewidth = 0)
+
+                # Axis style
+                ax_act.set_title(feature_act)
+                ax_act.set_xlabel(r"$\^y$")
+                if ylim is not None:
+                    ax_act.set_xlim(ylim)
+
+                # Crossvalidation
+                if df_pd_cv is not None:
+                    ax_act.errorbar(df_plot["yhat_mean"], df_plot["value"],
+                                    xerr = df_plot["yhat_mean_ci"] * 10,
+                                    fmt = ".", marker = "s", capsize = 5, fillstyle = "none", color = "grey")
+
+        else:
+            pass # TODO
+
+        i_ax += 1
+
+        # Write figures
+        if i_ax == n_ppp or i == len(features) - 1:
+            if i == len(features) - 1:
+                for k in range(i_ax, nrow * ncol):
+                    # Remove unused axes
+                    ax.flat[k].axis("off")
+            fig.tight_layout()
+            if pdf is not None:
+                pdf_pages.savefig(fig)
+
+    # Close pdf
+    if pdf is not None:
+        pdf_pages.close()
+
+
+
+
 # Calculate shapely values
 # noinspection PyPep8Naming
 def calc_shap(df_explain, fit, tr_spm = None, metr = None, cate = None, df_ref = None,
-              target_type = "CLASS", b_sample = None, b_all = None):
+              target = "target", target_type = "CLASS", id_name = "id",  b_sample = None, b_all = None):
     # target_type = TARGET_TYPE;
 
     # Calc X_explain:
@@ -1173,7 +1348,7 @@ def calc_shap(df_explain, fit, tr_spm = None, metr = None, cate = None, df_ref =
     X_explain = tr_spm.transform(df_explain)
 
     # Get shap values
-    pdb.set_trace()
+    #pdb.set_trace()
     explainer = shap.TreeExplainer(fit)
     shap_values = explainer.shap_values(X_explain)
     intercepts = explainer.expected_value
@@ -1250,6 +1425,14 @@ def calc_shap(df_explain, fit, tr_spm = None, metr = None, cate = None, df_ref =
         # Sort it to convenient shape
         df_shap = df_shap_tmp2.sort_values(["row_id", "target", "rank"]).reset_index(drop = True)
 
+    if target_type != "MULTICLASS":
+        df_shap = df_shap.drop(columns = "target")
+
+    # Add id and true target
+    df_shap = df_shap.merge(df_explain[[id_name, target]]
+                            .rename(columns = {target: "y"})
+                            .assign(row_id = np.arange(len(df_explain))),
+                            how = "left", on = "row_id")
     return df_shap
 
 
@@ -1275,6 +1458,121 @@ def check_shap(df_shap, yhat_shap, target_type = "CLASS"):
         print(close)
     else:
         print("Info: Shap values and yhat match.")
+
+
+# Plot distribution regarding target
+def plot_shap(df_shap, topn, id_name, color = None,
+              nrow = 1, ncol = 1, w = 8, h = 6,
+              pdf = None):
+    # topn = 4; color = twocol; ylim = None; ncol=3; nrow=3; w=8; h=6; pdf=None;
+
+    # Help variables
+    n_ppp = ncol * nrow  # plots per page
+
+    # Open pdf
+    if pdf is not None:
+        pdf_pages = PdfPages(pdf)
+    else:
+        pdf_pages = None
+
+    # Dummy initilization
+    fig = ax = i_ax = None
+
+    # Plot (loop over ids)
+    ids = df_shap[id_name].unique()
+    for i, id in enumerate(ids):
+        # i=0; id = ids[0]
+
+        # Start new subplot on new page
+        if i % n_ppp == 0:
+            fig, ax = plt.subplots(nrow, ncol)
+            fig.set_size_inches(w = w, h = h)
+            i_ax = 0
+
+        # Catch single plot case
+        if n_ppp == 1:
+            ax_act = ax
+        else:
+            ax_act = ax.flat[i_ax]
+
+        # Subset on id
+        df_plot = df_shap[df_shap[id_name] == id].reset_index(drop = True)
+
+        # Get some information
+        y = df_plot["y"][0]
+        yhat_min = df_plot["yhat"].min()
+        yhat_max = df_plot["yhat"].max()
+
+        # Prepare
+        df_plot = (df_plot.drop(columns = "y")
+                          .assign(offset = lambda x: x["yhat"].shift(1).fillna(0),
+                                  bar = lambda x: x["yhat"] - x["offset"],
+                                  color = lambda x: np.where(x["variable"] == "intercept", "grey",
+                                                             np.where(x["bar"] > 0, color[1], color[0])),
+                                  bar_label = lambda x: np.where(x["variable"] == "intercept",
+                                                                 x["variable"],
+                                                                 x["variable"] + " = " + x["variable_value"].astype(
+                                                                     "str")))
+                          .loc[:, ["bar_label", "bar", "offset", "color"]])
+
+        if topn is not None:
+            df_plot = pd.concat([df_plot.iloc[:(topn + 1)],
+                                 pd.DataFrame(dict(bar_label = "... the rest",
+                                                   bar = df_plot.iloc[(topn + 1):]["bar"].sum(),
+                                                   offset = df_plot.iloc[(topn + 1)]["offset"]),
+                                              index = [0])
+                                .assign(color = lambda x: np.where(x["bar"] > 0, color[1], color[0]))])
+
+        # Add final prediction
+        df_plot = (pd.concat([df_plot, pd.DataFrame(dict(bar_label = "Prediction", bar = df_plot["bar"].sum(),
+                                                         offset = 0, color = "black"), index = [0])])
+                   .reset_index(drop = True))
+
+        # Plot
+        ax_act.barh(df_plot["bar_label"], df_plot["bar"], left = df_plot["offset"], color = df_plot["color"],
+                    alpha = 0.5,
+                    edgecolor = "black")
+
+        # Set axis limits
+        ax_act.set_xlim(yhat_min - 0.1 * (yhat_max - yhat_min),
+                        yhat_max + 0.1 * (yhat_max - yhat_min))
+
+        for i in range(len(df_plot)):
+            # Text
+            ax_act.annotate(df_plot.iloc[i]["bar"].round(3),
+                            (df_plot.iloc[i]["offset"] + max(0, df_plot.iloc[i]["bar"])
+                             + np.ptp(ax_act.get_xlim()) * 0.02 ,
+                             df_plot.iloc[i]["bar_label"]),
+                            ha = "left", #if ~df_plot.iloc[i][["bar_label"]].isin(["intercept", "Prediction"])[0] else "right",
+                            va = "center", size = 10,
+                            color = "black") #"white" if i == (len(df_plot) - 1) else "black")
+
+            # Lines
+            if i < (len(df_plot) - 1):
+                df_line = pd.concat([pd.DataFrame(dict(x = df_plot.iloc[i]["offset"] + df_plot.iloc[i]["bar"],
+                                                       y = df_plot.iloc[i]["bar_label"]), index = [0]),
+                                     pd.DataFrame(dict(x = df_plot.iloc[i]["offset"] + df_plot.iloc[i]["bar"],
+                                                       y = df_plot.iloc[i + 1]["bar_label"]), index = [0])])
+                ax_act.plot(df_line["x"], df_line["y"], color = "black", linestyle = ":")
+
+        # Title
+        ax_act.set_title(id_name + " = " + str(id) + " (y = " + str(y) + ")")
+
+        i_ax += 1
+
+        # Write figures
+        if i_ax == n_ppp or i == len(ids) - 1:
+            if i == len(ids) - 1:
+                for k in range(i_ax, nrow * ncol):
+                    # Remove unused axes
+                    ax.flat[k].axis("off")
+            fig.tight_layout()
+            if pdf is not None:
+                pdf_pages.savefig(fig)
+
+    # Close pdf
+    if pdf is not None:
+        pdf_pages.close()
 
 
 # ######################################################################################################################
@@ -1765,3 +2063,4 @@ class MapNonexisting(BaseEstimator, TransformerMixin):
         else:
             self.fit(df)
             return df
+

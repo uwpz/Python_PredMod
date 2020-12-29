@@ -18,7 +18,7 @@ from keras.wrappers.scikit_learn import KerasClassifier, KerasRegressor
 #  from sklearn.tree import DecisionTreeRegressor, plot_tree , export_graphviz
 
 # Main parameter
-TARGET_TYPE = "MULTICLASS"
+TARGET_TYPE = "CLASS"
 
 # Specific parameters
 n_jobs = 4
@@ -88,7 +88,7 @@ fit = (GridSearchCV(SGDRegressor(penalty = "ElasticNet", warm_start = True) if T
                     refit = False,
                     scoring = d_scoring[TARGET_TYPE],
                     return_train_score = True,
-                    n_jobs = n_jobs)
+                    n_jobs = 1)
        .fit(CreateSparseMatrix(metr = metr_binned, cate = cate_binned, df_ref = df_tune).fit_transform(df_tune),
             df_tune["target"]))
 plot_cvresult(fit.cv_results_, metric = metric, x_var = "alpha", color_var = "l1_ratio")
