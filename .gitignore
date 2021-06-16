@@ -9,3 +9,4 @@ data/census-income.data
 .Rhistory
 RStudio.Rproj
 output_HMS/
+*.gz
