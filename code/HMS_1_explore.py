@@ -180,13 +180,33 @@ print(varimps_nume)
 
 # Plot
 distr_nume_plots = (hms_plot.MultiFeatureDistributionPlotter(target_limits = ylim, show_regplot = True,
-                                                             n_rows = 2, n_cols = 4, w = 12, h = 8)
+                                                             n_rows = 2, n_cols = 2, w = 12, h = 8)
                     .plot(features = df[np.column_stack((nume, nume + "_BINNED")).ravel()],
                           target = df[target_name],
                           varimps = varimps_nume,
                           file_path = plotloc + TARGET_TYPE + "_distr_nume_final.pdf"))
+'''
+%matplotlib inline
+def show_figure(fig):
+    # create a dummy figure and use its manager to display "fig"
+    dummy = plt.figure()
+    new_manager = dummy.canvas.manager
+    new_manager.canvas.figure = fig
+    fig.set_canvas(new_manager.canvas)
+from matplotlib.backends.backend_pdf import PdfPages
 
-
+pdf_pages = PdfPages(plotloc + TARGET_TYPE + "_deleteme.pdf")
+for page in range(len(distr_nume_plots)):
+    ax = distr_nume_plots[page][1][0, 0]
+    ax.set_title("blub")
+    leg = ax.legend()
+    leg.set_text(leg.get_texts()[0])
+    
+    show_figure(distr_nume_plots[page][0])
+    pdf_pages.savefig(distr_nume_plots[page][0])
+pdf_pages.close()
+'''
+'''
 plt.ion(); matplotlib.use('TkAgg')
 
 page = 0
@@ -215,6 +235,8 @@ old_ax.pchanged()
 #old_ax.set_position(new_ax.get_position())
 
 fig.add_axes(old_ax)
+'''
+
 
 
 

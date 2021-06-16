@@ -61,8 +61,8 @@ matplotlib.use('Agg')
 # ######################################################################################################################
 
 # Locations
-dataloc = "./data/"
-plotloc = "./output/"
+dataloc = "../data/"
+plotloc = "../output/"
 
 # Util
 sns.set(style = "whitegrid")
@@ -100,7 +100,7 @@ def rmse(y_true, y_pred):
 
 
 def auc(y_true, y_pred):
-    pdb.set_trace()
+    #pdb.set_trace()
     if y_pred.ndim == 2:
         if y_pred.shape[1] == 2:
             y_pred = y_pred[:, 1]
