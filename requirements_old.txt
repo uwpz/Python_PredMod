@@ -33,7 +33,7 @@ lightgbm==2.3.0
 Markdown==3.1.1
 matplotlib==3.3.2
 more-itertools==8.5.0
-numpy==1.17.2
+numpy==1.22.0
 opt-einsum==3.1.0
 pandas==0.25.1
 parso==0.5.2
